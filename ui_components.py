@@ -716,3 +716,291 @@ class CategoryEditorDialog(QWidget):
         """)
         return combo
 
+
+# =============================================================================
+# Analytics Panel (Phase A: Analytics Engine)
+# =============================================================================
+
+class AnalyticsPanel(QWidget):
+    """Panel displaying forecasts and recommendations."""
+    
+    forecast_requested = pyqtSignal(str)  # Forecast method name
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.recommendations = []
+        self.forecast_data = None
+        self.init_ui()
+    
+    def init_ui(self):
+        """Initialize the analytics panel."""
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+        
+        # Header with toggle
+        header_layout = QHBoxLayout()
+        
+        title = QLabel("📊 Analytics & Prognosen")
+        title.setStyleSheet(f"""
+            font-size: 16px;
+            font-weight: 700;
+            color: {COLORS['text_primary']};
+        """)
+        header_layout.addWidget(title)
+        
+        header_layout.addStretch()
+        
+        # Forecast method selector
+        method_label = QLabel("Methode:")
+        method_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
+        header_layout.addWidget(method_label)
+        
+        self.method_combo = QComboBox()
+        self.method_combo.addItems([
+            "Kombinierte Prognose",
+            "Lineare Regression",
+            "Exponentielle Glättung",
+            "Gleitender Durchschnitt",
+            "Wachstumsrate"
+        ])
+        self.method_combo.currentTextChanged.connect(self._on_method_changed)
+        self.method_combo.setMinimumWidth(180)
+        header_layout.addWidget(self.method_combo)
+        
+        layout.addLayout(header_layout)
+        
+        # Content area with recommendations and forecast info
+        content_frame = QFrame()
+        content_frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {COLORS['bg_medium']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 8px;
+            }}
+        """)
+        content_layout = QVBoxLayout(content_frame)
+        content_layout.setContentsMargins(12, 12, 12, 12)
+        content_layout.setSpacing(8)
+        
+        # Forecast summary
+        self.forecast_label = QLabel("Prognose wird berechnet...")
+        self.forecast_label.setStyleSheet(f"""
+            color: {COLORS['text_primary']};
+            font-size: 13px;
+            padding: 8px;
+            background-color: {COLORS['bg_light']};
+            border-radius: 6px;
+        """)
+        self.forecast_label.setWordWrap(True)
+        content_layout.addWidget(self.forecast_label)
+        
+        # Recommendations container
+        self.recommendations_container = QWidget()
+        self.recommendations_layout = QVBoxLayout(self.recommendations_container)
+        self.recommendations_layout.setContentsMargins(0, 0, 0, 0)
+        self.recommendations_layout.setSpacing(6)
+        content_layout.addWidget(self.recommendations_container)
+        
+        layout.addWidget(content_frame)
+    
+    def _on_method_changed(self, method: str):
+        """Handle forecast method change."""
+        method_map = {
+            "Kombinierte Prognose": "combined",
+            "Lineare Regression": "linear",
+            "Exponentielle Glättung": "exponential",
+            "Gleitender Durchschnitt": "moving_average",
+            "Wachstumsrate": "growth_rate"
+        }
+        self.forecast_requested.emit(method_map.get(method, "combined"))
+    
+    def update_forecast(self, forecast_data: Dict[str, Any]):
+        """Update the forecast display."""
+        self.forecast_data = forecast_data
+        
+        if not forecast_data or not forecast_data.get('values'):
+            self.forecast_label.setText("Nicht genug Daten für Prognose")
+            return
+        
+        method = forecast_data.get('method', 'Prognose')
+        interpretation = forecast_data.get('interpretation', {})
+        trend = interpretation.get('trend', 'unbekannt')
+        confidence = interpretation.get('confidence', 0)
+        message = interpretation.get('message', '')
+        
+        # Trend icon
+        trend_icon = "📈" if trend == "steigend" else ("📉" if trend == "fallend" else "➡️")
+        
+        # Format forecast values
+        values = forecast_data.get('values', [])
+        periods = forecast_data.get('periods', [])
+        
+        if values and periods:
+            next_value = values[0]
+            last_period = periods[-1] if periods else "?"
+            
+            forecast_text = f"""
+<b>{trend_icon} {method}</b><br>
+<span style='color: {COLORS["text_secondary"]}'>{message}</span><br><br>
+<b>Nächste Periode:</b> €{next_value:,.0f}<br>
+<b>Konfidenz:</b> {confidence:.0%} | <b>Trend:</b> {trend.capitalize()}
+""".replace(',', '.')
+        else:
+            forecast_text = f"<b>{method}</b><br>{message}"
+        
+        self.forecast_label.setText(forecast_text)
+    
+    def update_recommendations(self, recommendations: list):
+        """Update the recommendations display."""
+        self.recommendations = recommendations
+        
+        # Clear existing
+        while self.recommendations_layout.count():
+            child = self.recommendations_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+        
+        if not recommendations:
+            no_rec = QLabel("✓ Keine dringenden Empfehlungen")
+            no_rec.setStyleSheet(f"color: {COLORS['kpi_positive']}; padding: 8px;")
+            self.recommendations_layout.addWidget(no_rec)
+            return
+        
+        # Show top 3 recommendations
+        for rec in recommendations[:3]:
+            rec_widget = self._create_recommendation_widget(rec)
+            self.recommendations_layout.addWidget(rec_widget)
+    
+    def _create_recommendation_widget(self, rec: Dict) -> QFrame:
+        """Create a widget for a single recommendation."""
+        frame = QFrame()
+        
+        # Color based on severity
+        severity = rec.get('severity', 'info')
+        severity_colors = {
+            'critical': COLORS['chart_red'],
+            'high': COLORS['chart_orange'],
+            'medium': COLORS['chart_yellow'],
+            'low': COLORS['chart_blue'],
+            'info': COLORS['chart_cyan'],
+        }
+        border_color = severity_colors.get(severity, COLORS['border'])
+        
+        frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {COLORS['bg_light']};
+                border-left: 4px solid {border_color};
+                border-radius: 4px;
+                padding: 8px;
+            }}
+        """)
+        
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setSpacing(4)
+        
+        # Title with icon
+        severity_icons = {
+            'critical': '🚨',
+            'high': '⚠️',
+            'medium': '📋',
+            'low': '💡',
+            'info': 'ℹ️',
+        }
+        icon = severity_icons.get(severity, '•')
+        
+        title = QLabel(f"{icon} {rec.get('title', 'Empfehlung')}")
+        title.setStyleSheet(f"font-weight: 600; color: {COLORS['text_primary']};")
+        layout.addWidget(title)
+        
+        # Message
+        msg = QLabel(rec.get('message', ''))
+        msg.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
+        msg.setWordWrap(True)
+        layout.addWidget(msg)
+        
+        # Action
+        action = QLabel(f"→ {rec.get('action', '')}")
+        action.setStyleSheet(f"color: {COLORS['primary']}; font-size: 11px; font-style: italic;")
+        action.setWordWrap(True)
+        layout.addWidget(action)
+        
+        return frame
+
+
+class ForecastChartOverlay:
+    """Helper class to add forecast overlay to charts."""
+    
+    @staticmethod
+    def add_forecast_to_axes(ax, historical_x, historical_y, 
+                             forecast_periods, forecast_values,
+                             confidence_lower=None, confidence_upper=None,
+                             color=None):
+        """
+        Add forecast visualization to matplotlib axes.
+        
+        Args:
+            ax: Matplotlib axes
+            historical_x: X values of historical data
+            historical_y: Y values of historical data
+            forecast_periods: Labels for forecast periods
+            forecast_values: Forecast values
+            confidence_lower: Lower confidence bound
+            confidence_upper: Upper confidence bound
+            color: Forecast line color
+        """
+        if not forecast_values:
+            return
+        
+        if color is None:
+            color = COLORS['chart_orange']
+        
+        # Calculate x positions for forecast
+        start_x = len(historical_x)
+        forecast_x = list(range(start_x, start_x + len(forecast_values)))
+        
+        # Connect last historical point to first forecast
+        connect_x = [start_x - 1] + forecast_x
+        connect_y = [historical_y[-1]] + forecast_values
+        
+        # Plot forecast line (dashed)
+        ax.plot(
+            connect_x, connect_y,
+            color=color,
+            linewidth=2.5,
+            linestyle='--',
+            marker='o',
+            markersize=6,
+            label='Prognose',
+            alpha=0.9
+        )
+        
+        # Add confidence interval
+        if confidence_lower and confidence_upper:
+            ax.fill_between(
+                forecast_x,
+                confidence_lower,
+                confidence_upper,
+                color=color,
+                alpha=0.15,
+                label='Konfidenzbereich'
+            )
+        
+        # Add forecast value labels
+        for i, (x, val) in enumerate(zip(forecast_x, forecast_values)):
+            ax.annotate(
+                f'€{val:,.0f}'.replace(',', '.'),
+                xy=(x, val),
+                xytext=(0, 10),
+                textcoords='offset points',
+                ha='center',
+                va='bottom',
+                fontsize=9,
+                color=color,
+                fontweight='bold',
+                fontstyle='italic'
+            )
+        
+        return forecast_x
+

@@ -45,16 +45,20 @@ from styles import MAIN_STYLESHEET, COLORS, apply_matplotlib_style
 from data_manager import DataManager
 from ui_components import (
     KPIPanel, DateRangeFilter, ViewSelector, 
-    SearchFilterBar, ExportPanel, CategoryEditorDialog
+    SearchFilterBar, ExportPanel, CategoryEditorDialog,
+    AnalyticsPanel
 )
 from charts import ExpenseChart
+
+# Analytics Engine (Phase A)
+from analytics import ForecastEngine, RecommendationEngine
 
 
 class ExpenseTrackerApp(QMainWindow):
     """Main application window with Business Intelligence Dashboard."""
     
     APP_NAME = "Rechnungsanalyse-Tool"
-    APP_VERSION = "3.0.0"  # Phase 3: Data Management
+    APP_VERSION = "3.1.0"  # Phase A: Analytics Engine
     
     def __init__(self):
         super().__init__()
@@ -196,6 +200,18 @@ class ExpenseTrackerApp(QMainWindow):
             }}
         """)
         
+        # Top row: Chart + Analytics Panel (horizontal splitter)
+        top_splitter = QSplitter(Qt.Orientation.Horizontal)
+        top_splitter.setStyleSheet(f"""
+            QSplitter::handle {{
+                background-color: {COLORS['border']};
+                width: 3px;
+            }}
+            QSplitter::handle:hover {{
+                background-color: {COLORS['primary']};
+            }}
+        """)
+        
         # Chart section
         chart_container = QFrame()
         chart_container.setStyleSheet(f"""
@@ -211,7 +227,30 @@ class ExpenseTrackerApp(QMainWindow):
         self.chart = ExpenseChart()
         chart_layout.addWidget(self.chart)
         
-        splitter.addWidget(chart_container)
+        top_splitter.addWidget(chart_container)
+        
+        # Analytics Panel (Phase A)
+        analytics_container = QFrame()
+        analytics_container.setStyleSheet(f"""
+            QFrame {{
+                background-color: {COLORS['bg_medium']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 12px;
+            }}
+        """)
+        analytics_layout = QVBoxLayout(analytics_container)
+        analytics_layout.setContentsMargins(16, 16, 16, 16)
+        
+        self.analytics_panel = AnalyticsPanel()
+        self.analytics_panel.forecast_requested.connect(self.on_forecast_method_changed)
+        analytics_layout.addWidget(self.analytics_panel)
+        
+        top_splitter.addWidget(analytics_container)
+        
+        # Set horizontal splitter sizes (75% chart, 25% analytics)
+        top_splitter.setSizes([800, 280])
+        
+        splitter.addWidget(top_splitter)
         
         # Table section
         table_container = QFrame()
@@ -615,6 +654,9 @@ class ExpenseTrackerApp(QMainWindow):
         
         # Update display (chart and table)
         self.update_display()
+        
+        # Update Analytics (Phase A)
+        self.update_analytics()
         
         # Update status
         total_count = len(self.data_manager.expenses_df)
@@ -1110,6 +1152,83 @@ class ExpenseTrackerApp(QMainWindow):
                     "Hinweis: Für PDF-Export wird 'reportlab' benötigt.\n"
                     "Installation: pip install reportlab"
                 )
+    
+    # =========================================================================
+    # Analytics Engine Methods (Phase A)
+    # =========================================================================
+    
+    def update_analytics(self, method: str = "combined"):
+        """Update forecasts and recommendations using Analytics Engine.
+        
+        Args:
+            method: Forecast method ('combined', 'linear', 'exponential', 
+                   'moving_average', 'growth_rate')
+        """
+        # Get filtered data
+        if self.current_start_date and self.current_end_date:
+            data = self.data_manager.filter_by_date_range(
+                self.current_start_date, self.current_end_date
+            )
+        else:
+            data = self.data_manager.expenses_df
+        
+        if data.empty:
+            self.analytics_panel.update_forecast({})
+            self.analytics_panel.update_recommendations([])
+            return
+        
+        # Initialize Forecast Engine
+        try:
+            forecast_engine = ForecastEngine(data)
+            
+            # Get forecast based on method
+            if method == "combined":
+                forecast = forecast_engine.combined_forecast(periods=6)
+            elif method == "linear":
+                forecast = forecast_engine.linear_regression_forecast(periods=6)
+            elif method == "exponential":
+                forecast = forecast_engine.exponential_smoothing_forecast(periods=6)
+            elif method == "moving_average":
+                forecast = forecast_engine.moving_average_forecast(periods=6)
+            elif method == "growth_rate":
+                forecast = forecast_engine.growth_rate_forecast(periods=6)
+            else:
+                forecast = forecast_engine.combined_forecast(periods=6)
+            
+            # Store forecast for chart overlay
+            self.current_forecast = forecast
+            
+            # Update panel
+            self.analytics_panel.update_forecast(forecast)
+            
+        except Exception as e:
+            print(f"Forecast error: {e}")
+            self.current_forecast = None
+            self.analytics_panel.update_forecast({
+                'method': 'Fehler',
+                'interpretation': {'message': str(e)}
+            })
+        
+        # Generate Recommendations
+        try:
+            recommendation_engine = RecommendationEngine(revenue_data=data)
+            recommendations = recommendation_engine.analyze_all()
+            
+            # Convert to dict list for UI
+            rec_dicts = [r.to_dict() for r in recommendations]
+            self.analytics_panel.update_recommendations(rec_dicts)
+            
+        except Exception as e:
+            print(f"Recommendation error: {e}")
+            self.analytics_panel.update_recommendations([])
+    
+    def on_forecast_method_changed(self, method: str):
+        """Handle forecast method change from UI.
+        
+        Args:
+            method: Method identifier from AnalyticsPanel
+        """
+        self.update_analytics(method)
 
 
 def main():
@@ -1124,7 +1243,7 @@ def main():
     
     # Set application metadata (for Desktop App)
     app.setApplicationName("Rechnungsanalyse-Tool")
-    app.setApplicationVersion("3.0.0")
+    app.setApplicationVersion("3.1.0")
     app.setOrganizationName("Rechnungsanalyse")
     
     window = ExpenseTrackerApp()
