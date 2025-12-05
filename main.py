@@ -32,6 +32,7 @@ from typing import Optional
 
 import pdfplumber
 import pandas as pd
+import matplotlib.pyplot as plt
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QTableWidget, QTableWidgetItem, QFileDialog, 
@@ -534,7 +535,7 @@ class ExpenseTrackerApp(QMainWindow):
                 # Extract invoice date (multiple formats)
                 invoice_date = self._extract_invoice_date(text)
                 if not invoice_date:
-                    invoice_date = datetime.now()
+                        invoice_date = datetime.now()
                 
                 # Extract NET amount using the extended keyword-based extraction
                 net_amount = self._extract_net_amount(text)
@@ -1557,9 +1558,16 @@ class ExpenseTrackerApp(QMainWindow):
         action_labels = {
             "revenue": "📁 PDF Laden",
             "expenses": "📁 PDF Laden",
-            "cross": "🔄 Analyse aktualisieren"
+            "cross": "Aktualisieren"
         }
         self.action_btn.setText(action_labels.get(self.current_dashboard, "📁 PDF Laden"))
+        
+        # Show/hide manual entry and clear buttons based on dashboard
+        is_cross = self.current_dashboard == "cross"
+        if hasattr(self, 'manual_entry_btn'):
+            self.manual_entry_btn.setVisible(not is_cross)
+        if hasattr(self, 'clear_btn'):
+            self.clear_btn.setVisible(not is_cross)
         
         # Show appropriate content
         if self.current_dashboard == "revenue":
@@ -1703,9 +1711,27 @@ class ExpenseTrackerApp(QMainWindow):
     
     def show_revenue_dashboard(self):
         """Show revenue analysis dashboard (current implementation)."""
-        # Reset KPI label to revenue
-        if hasattr(self, 'kpi_panel') and hasattr(self.kpi_panel, 'total_card'):
-            self.kpi_panel.total_card.title_label.setText("GESAMTEINNAHMEN")
+        # Hide cross-dashboard filter
+        if hasattr(self, 'cross_year_filter'):
+            self.cross_year_filter.setVisible(False)
+        
+        # Show search filter
+        if hasattr(self, 'search_filter'):
+            self.search_filter.setVisible(True)
+        
+        # Restore filter controls (hidden in cross-dashboard)
+        if hasattr(self, 'date_filter'):
+            self.date_filter.setVisible(True)
+        if hasattr(self, 'view_selector'):
+            self.view_selector.setVisible(True)
+        if hasattr(self, 'export_panel'):
+            self.export_panel.setVisible(True)
+        
+        # Restore chart controls
+        self._restore_chart_controls()
+        
+        # Reset KPI labels to revenue format
+        self._reset_kpi_labels_revenue()
         
         # Show analytics panel for revenue dashboard
         if hasattr(self, 'analytics_panel'):
@@ -1715,9 +1741,47 @@ class ExpenseTrackerApp(QMainWindow):
         self.refresh_all()
         self.status_label.setText("Einnahmenanalyse aktiv")
     
+    def _reset_kpi_labels_revenue(self):
+        """Reset KPI labels to revenue format."""
+        if hasattr(self, 'kpi_panel'):
+            if hasattr(self.kpi_panel, 'total_card'):
+                self.kpi_panel.total_card.title_label.setText("GESAMTEINNAHMEN")
+                self.kpi_panel.total_card.value_label.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 22px; font-weight: 700;")
+            if hasattr(self.kpi_panel, 'avg_card'):
+                self.kpi_panel.avg_card.title_label.setText("Ø MONATLICH")
+                self.kpi_panel.avg_card.value_label.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 22px; font-weight: 700;")
+            if hasattr(self.kpi_panel, 'high_card'):
+                self.kpi_panel.high_card.title_label.setText("HÖCHSTER MONAT")
+                self.kpi_panel.high_card.value_label.setStyleSheet(f"color: {COLORS['success']}; font-size: 22px; font-weight: 700;")
+            if hasattr(self.kpi_panel, 'yoy_card'):
+                self.kpi_panel.yoy_card.title_label.setText("JAHRESVERGLEICH")
+                self.kpi_panel.yoy_card.value_label.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 22px; font-weight: 700;")
+    
     def show_expenses_dashboard(self):
         """Show expenses analysis dashboard (without analytics panel)."""
         try:
+            # Hide cross-dashboard filter
+            if hasattr(self, 'cross_year_filter'):
+                self.cross_year_filter.setVisible(False)
+            
+            # Show search filter
+            if hasattr(self, 'search_filter'):
+                self.search_filter.setVisible(True)
+            
+            # Restore filter controls (hidden in cross-dashboard)
+            if hasattr(self, 'date_filter'):
+                self.date_filter.setVisible(True)
+            if hasattr(self, 'view_selector'):
+                self.view_selector.setVisible(True)
+            if hasattr(self, 'export_panel'):
+                self.export_panel.setVisible(True)
+            
+            # Restore chart controls
+            self._restore_chart_controls()
+            
+            # Reset KPI labels for expenses
+            self._reset_kpi_labels_expenses()
+            
             self.status_label.setText("Ausgaben-Analyse aktiv")
             self.status_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
             self.refresh_expenses_dashboard()
@@ -1727,6 +1791,32 @@ class ExpenseTrackerApp(QMainWindow):
             import traceback
             traceback.print_exc()
             self.status_label.setText(f"Fehler: {str(e)}")
+    
+    def _reset_kpi_labels_expenses(self):
+        """Reset KPI labels to expenses format."""
+        if hasattr(self, 'kpi_panel'):
+            if hasattr(self.kpi_panel, 'total_card'):
+                self.kpi_panel.total_card.title_label.setText("GESAMTAUSGABEN")
+                self.kpi_panel.total_card.value_label.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 22px; font-weight: 700;")
+            if hasattr(self.kpi_panel, 'avg_card'):
+                self.kpi_panel.avg_card.title_label.setText("Ø MONATLICH")
+                self.kpi_panel.avg_card.value_label.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 22px; font-weight: 700;")
+            if hasattr(self.kpi_panel, 'high_card'):
+                self.kpi_panel.high_card.title_label.setText("HÖCHSTER MONAT")
+                self.kpi_panel.high_card.value_label.setStyleSheet(f"color: {COLORS['chart_red']}; font-size: 22px; font-weight: 700;")
+            if hasattr(self.kpi_panel, 'yoy_card'):
+                self.kpi_panel.yoy_card.title_label.setText("JAHRESVERGLEICH")
+                self.kpi_panel.yoy_card.value_label.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 22px; font-weight: 700;")
+    
+    def _restore_chart_controls(self):
+        """Restore chart controls after leaving cross-dashboard."""
+        if hasattr(self, 'chart'):
+            if hasattr(self.chart, 'chart_type_combo'):
+                self.chart.chart_type_combo.setVisible(True)
+            if hasattr(self.chart, 'trend_checkbox'):
+                self.chart.trend_checkbox.setVisible(True)
+            if hasattr(self.chart, 'breadcrumb_frame'):
+                self.chart.breadcrumb_frame.setVisible(True)
     
     def refresh_expenses_dashboard(self):
         """Refresh the expenses dashboard with current data (no analytics)."""
@@ -1918,24 +2008,510 @@ class ExpenseTrackerApp(QMainWindow):
                 })
     
     def show_cross_dashboard(self):
-        """Show cross-dashboard analysis."""
-        # Placeholder - will be implemented
-        self.status_label.setText("🔄 Cross-Dashboard - Wird implementiert...")
-        self.status_label.setStyleSheet(f"color: {COLORS['chart_yellow']};")
+        """Show cross-dashboard analysis (Revenue vs. Expenses = Profit)."""
+        try:
+            print("[Cross-Dashboard] Initializing...")
+            self.status_label.setText("Cross-Dashboard - Einnahmen vs. Ausgaben")
+            self.status_label.setStyleSheet(f"color: {COLORS['primary']};")
+            
+            # Hide analytics panel for cross-dashboard
+            if hasattr(self, 'analytics_panel'):
+                self.analytics_panel.setVisible(False)
+            
+            # Hide filter controls (Zeitraum, Vergleich, Ansicht) - not needed for cross-dashboard
+            if hasattr(self, 'date_filter'):
+                self.date_filter.setVisible(False)
+            if hasattr(self, 'view_selector'):
+                self.view_selector.setVisible(False)
+            
+            # Keep export panel visible
+            if hasattr(self, 'export_panel'):
+                self.export_panel.setVisible(True)
+            
+            # Hide chart controls that don't apply to cross-dashboard
+            if hasattr(self, 'chart'):
+                # Hide the chart type selector and other controls
+                if hasattr(self.chart, 'chart_type_combo'):
+                    self.chart.chart_type_combo.setVisible(False)
+                if hasattr(self.chart, 'trend_checkbox'):
+                    self.chart.trend_checkbox.setVisible(False)
+                if hasattr(self.chart, 'breadcrumb_frame'):
+                    self.chart.breadcrumb_frame.setVisible(False)
+            
+            # Get available years from both data sources
+            available_years = self._get_available_years()
+            print(f"[Cross-Dashboard] Available years: {available_years}")
+            
+            if not available_years:
+                self._show_empty_cross_dashboard()
+                return
+            
+            # Show year filter in search bar area (repurpose)
+            self._setup_cross_dashboard_filter(available_years)
+            
+            # Calculate and display cross-dashboard data
+            self._refresh_cross_dashboard()
+            
+        except Exception as e:
+            print(f"ERROR in show_cross_dashboard: {e}")
+            import traceback
+            traceback.print_exc()
+            self.status_label.setText(f"Fehler: {str(e)}")
+    
+    def _get_available_years(self) -> list:
+        """Get all years available in revenue and expenses data."""
+        years = set()
         
+        # From revenue data
+        if hasattr(self, 'data_manager') and not self.data_manager.expenses_df.empty:
+            revenue_years = self.data_manager.expenses_df['Date'].dt.year.unique()
+            years.update(revenue_years)
+        
+        # From expenses data
+        if hasattr(self, 'expenses_data_manager') and not self.expenses_data_manager.expenses_df.empty:
+            expense_years = self.expenses_data_manager.expenses_df['Date'].dt.year.unique()
+            years.update(expense_years)
+        
+        return sorted(years, reverse=True)
+    
+    def _setup_cross_dashboard_filter(self, years: list):
+        """Setup year filter for cross-dashboard."""
+        # Check if cross filter already exists
+        if not hasattr(self, 'cross_year_filter'):
+            # Create year filter combo
+            self.cross_year_filter = QComboBox()
+            self.cross_year_filter.setStyleSheet(f"""
+                QComboBox {{
+                    background-color: {COLORS['bg_elevated']};
+                    color: {COLORS['text_primary']};
+                    border: 2px solid {COLORS['primary']};
+                    border-radius: 6px;
+                    padding: 6px 12px;
+                    font-size: 14px;
+                    font-weight: 600;
+                    min-width: 150px;
+                }}
+                QComboBox:hover {{
+                    border-color: {COLORS['primary_light']};
+                }}
+                QComboBox::drop-down {{
+                    border: none;
+                    width: 25px;
+                }}
+                QComboBox::down-arrow {{
+                    border-left: 4px solid transparent;
+                    border-right: 4px solid transparent;
+                    border-top: 5px solid {COLORS['primary']};
+                }}
+                QComboBox QAbstractItemView {{
+                    background-color: {COLORS['bg_medium']};
+                    color: {COLORS['text_primary']};
+                    selection-background-color: {COLORS['primary']};
+                    border: 1px solid {COLORS['border']};
+                }}
+            """)
+            self.cross_year_filter.currentTextChanged.connect(self._on_cross_year_changed)
+        
+        # Update years
+        self.cross_year_filter.blockSignals(True)
+        self.cross_year_filter.clear()
+        self.cross_year_filter.addItem("Alle Jahre")
+        for year in years:
+            self.cross_year_filter.addItem(str(int(year)))
+        self.cross_year_filter.blockSignals(False)
+        
+        # Show the filter in search area
+        if hasattr(self, 'search_filter'):
+            self.search_filter.setVisible(False)
+        
+        # Add to filter area if not there
+        if self.cross_year_filter.parent() is None:
+            # Find filter_frame and add
+            for child in self.centralWidget().findChildren(QFrame):
+                if child.findChild(SearchFilterBar):
+                    layout = child.layout()
+                    if layout:
+                        # Clear and add year filter
+                        layout.addWidget(QLabel("Jahr auswählen:"))
+                        layout.addWidget(self.cross_year_filter)
+                        layout.addStretch()
+                    break
+        
+        self.cross_year_filter.setVisible(True)
+    
+    def _on_cross_year_changed(self, year_text: str):
+        """Handle year filter change in cross-dashboard."""
+        self._refresh_cross_dashboard()
+    
+    def _refresh_cross_dashboard(self):
+        """Refresh the cross-dashboard display with current filter."""
+        try:
+            # Get selected year
+            selected_year = None
+            if hasattr(self, 'cross_year_filter'):
+                year_text = self.cross_year_filter.currentText()
+                if year_text != "Alle Jahre":
+                    selected_year = int(year_text)
+            
+            # Get revenue and expenses data
+            revenue_df = self.data_manager.expenses_df.copy() if not self.data_manager.expenses_df.empty else pd.DataFrame()
+            expenses_df = self.expenses_data_manager.expenses_df.copy() if not self.expenses_data_manager.expenses_df.empty else pd.DataFrame()
+            
+            # Filter by year if selected
+            if selected_year:
+                if not revenue_df.empty:
+                    revenue_df = revenue_df[revenue_df['Date'].dt.year == selected_year]
+                if not expenses_df.empty:
+                    expenses_df = expenses_df[expenses_df['Date'].dt.year == selected_year]
+            
+            # Calculate KPIs
+            total_revenue = revenue_df['Amount'].sum() if not revenue_df.empty else 0
+            total_expenses = expenses_df['Amount'].sum() if not expenses_df.empty else 0
+            profit = total_revenue - total_expenses
+            profit_margin = (profit / total_revenue * 100) if total_revenue > 0 else 0
+            
+            # Update KPI panel with cross-dashboard values
+            self._update_cross_kpis(total_revenue, total_expenses, profit, profit_margin)
+            
+            # Draw comparison chart
+            self._draw_cross_chart(revenue_df, expenses_df, selected_year)
+            
+            # Update table with monthly breakdown
+            self._show_cross_table(revenue_df, expenses_df)
+            
+            # Update status
+            year_info = f" ({selected_year})" if selected_year else " (Alle Jahre)"
+            self.status_label.setText(f"Cross-Dashboard aktiv{year_info}")
+            
+        except Exception as e:
+            print(f"ERROR in _refresh_cross_dashboard: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def _update_cross_kpis(self, revenue: float, expenses: float, profit: float, margin: float):
+        """Update KPI panel with cross-dashboard values."""
+        if not hasattr(self, 'kpi_panel'):
+            return
+        
+        print(f"[Cross-KPIs] Revenue: {revenue}, Expenses: {expenses}, Profit: {profit}, Margin: {margin}")
+        
+        # Format helper
+        def format_euro(val):
+            return f"EUR {val:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
+        
+        # Card 1: Total Revenue (EINNAHMEN)
+        if hasattr(self.kpi_panel, 'total_card'):
+            self.kpi_panel.total_card.title_label.setText("EINNAHMEN")
+            self.kpi_panel.total_card.value_label.setText(format_euro(revenue))
+            self.kpi_panel.total_card.value_label.setStyleSheet(f"color: {COLORS['success']}; font-size: 22px; font-weight: 700;")
+            self.kpi_panel.total_card.detail_label.setText("Gesamteinnahmen")
+            self.kpi_panel.total_card.trend_label.setText("")
+        
+        # Card 2: Total Expenses (AUSGABEN)
+        if hasattr(self.kpi_panel, 'avg_card'):
+            self.kpi_panel.avg_card.title_label.setText("AUSGABEN")
+            self.kpi_panel.avg_card.value_label.setText(format_euro(expenses))
+            self.kpi_panel.avg_card.value_label.setStyleSheet(f"color: {COLORS['chart_red']}; font-size: 22px; font-weight: 700;")
+            self.kpi_panel.avg_card.detail_label.setText("Gesamtausgaben")
+            self.kpi_panel.avg_card.trend_label.setText("")
+        
+        # Card 3: Profit
+        if hasattr(self.kpi_panel, 'high_card'):
+            self.kpi_panel.high_card.title_label.setText("PROFIT")
+            profit_color = COLORS['success'] if profit >= 0 else COLORS['chart_red']
+            self.kpi_panel.high_card.value_label.setText(format_euro(profit))
+            self.kpi_panel.high_card.value_label.setStyleSheet(f"color: {profit_color}; font-size: 22px; font-weight: 700;")
+            self.kpi_panel.high_card.detail_label.setText("Einnahmen - Ausgaben")
+            self.kpi_panel.high_card.trend_label.setText("")
+        
+        # Card 4: Margin (MARGE) - using yoy_card
+        if hasattr(self.kpi_panel, 'yoy_card'):
+            self.kpi_panel.yoy_card.title_label.setText("MARGE")
+            margin_color = COLORS['success'] if margin >= 0 else COLORS['chart_red']
+            margin_text = f"{margin:+.1f}%"
+            self.kpi_panel.yoy_card.value_label.setText(margin_text)
+            self.kpi_panel.yoy_card.value_label.setStyleSheet(f"color: {margin_color}; font-size: 22px; font-weight: 700;")
+            self.kpi_panel.yoy_card.detail_label.setText("Profit / Einnahmen")
+            self.kpi_panel.yoy_card.trend_label.setText("")
+    
+    def _draw_cross_chart(self, revenue_df: pd.DataFrame, expenses_df: pd.DataFrame, year: int = None):
+        """Draw comparison chart for revenue vs expenses."""
+        try:
+            print(f"[Cross-Chart] Drawing chart for year: {year}")
+            print(f"[Cross-Chart] Revenue rows: {len(revenue_df)}, Expenses rows: {len(expenses_df)}")
+            
+            # IMPORTANT: Clear the chart's internal data to prevent auto-refresh overwriting
+            if hasattr(self.chart, 'data'):
+                self.chart.data = None
+            if hasattr(self.chart, 'raw_data'):
+                self.chart.raw_data = None
+            if hasattr(self.chart, 'comparison_data'):
+                self.chart.comparison_data = None
+            
+            # Clear and prepare canvas
+            self.chart.canvas.fig.clear()
+            ax = self.chart.canvas.fig.add_subplot(111)
+            
+            # Apply dark theme styling
+            ax.set_facecolor(COLORS['bg_medium'])
+            ax.tick_params(colors=COLORS['text_secondary'])
+            ax.xaxis.label.set_color(COLORS['text_primary'])
+            ax.yaxis.label.set_color(COLORS['text_primary'])
+            ax.title.set_color(COLORS['text_primary'])
+            for spine in ax.spines.values():
+                spine.set_color(COLORS['border'])
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            ax.grid(True, linestyle='--', alpha=0.3, color=COLORS['border'])
+            ax.set_axisbelow(True)
+            
+            # Aggregate monthly
+            def aggregate_monthly(df):
+                if df.empty:
+                    return pd.DataFrame(columns=['YearMonth', 'Amount'])
+                df = df.copy()
+                df['YearMonth'] = df['Date'].dt.strftime('%Y-%m')
+                return df.groupby('YearMonth')['Amount'].sum().reset_index()
+            
+            revenue_monthly = aggregate_monthly(revenue_df)
+            expenses_monthly = aggregate_monthly(expenses_df)
+            
+            print(f"[Cross-Chart] Revenue monthly: {len(revenue_monthly)} entries")
+            print(f"[Cross-Chart] Expenses monthly: {len(expenses_monthly)} entries")
+            
+            # Get all unique months
+            all_months = set()
+            if not revenue_monthly.empty:
+                all_months.update(revenue_monthly['YearMonth'].tolist())
+            if not expenses_monthly.empty:
+                all_months.update(expenses_monthly['YearMonth'].tolist())
+            
+            if not all_months:
+                ax.text(0.5, 0.5, 'Keine Daten vorhanden\n\nBitte importieren Sie Einnahmen und Ausgaben', 
+                       ha='center', va='center',
+                       fontsize=14, color=COLORS['text_muted'], transform=ax.transAxes)
+                self.chart.canvas.draw()
+                return
+            
+            all_months = sorted(all_months)
+            print(f"[Cross-Chart] All months: {all_months}")
+            
+            # Create data arrays
+            revenue_values = []
+            expenses_values = []
+            profit_values = []
+            
+            for month in all_months:
+                rev = 0
+                exp = 0
+                if not revenue_monthly.empty:
+                    rev_rows = revenue_monthly[revenue_monthly['YearMonth'] == month]
+                    if not rev_rows.empty:
+                        rev = rev_rows['Amount'].iloc[0]
+                if not expenses_monthly.empty:
+                    exp_rows = expenses_monthly[expenses_monthly['YearMonth'] == month]
+                    if not exp_rows.empty:
+                        exp = exp_rows['Amount'].iloc[0]
+                revenue_values.append(rev)
+                expenses_values.append(exp)
+                profit_values.append(rev - exp)
+            
+            # Plot grouped bars
+            x = np.arange(len(all_months))
+            width = 0.25
+            
+            bars1 = ax.bar(x - width, revenue_values, width, label='Einnahmen', 
+                          color='#4CAF50', alpha=0.9, edgecolor='white', linewidth=0.5)
+            bars2 = ax.bar(x, expenses_values, width, label='Ausgaben', 
+                          color='#F44336', alpha=0.9, edgecolor='white', linewidth=0.5)
+            bars3 = ax.bar(x + width, profit_values, width, label='Profit',
+                          color='#2196F3', alpha=0.9, edgecolor='white', linewidth=0.5)
+            
+            # Add value labels on bars
+            def add_bar_labels(bars, values):
+                for bar, val in zip(bars, values):
+                    if abs(val) > 100:  # Only label significant values
+                        height = bar.get_height()
+                        va = 'bottom' if height >= 0 else 'top'
+                        y_pos = height + (500 if height >= 0 else -500)
+                        ax.text(bar.get_x() + bar.get_width()/2., y_pos,
+                               f'{val/1000:.0f}k' if abs(val) >= 1000 else f'{val:.0f}',
+                               ha='center', va=va, fontsize=7, color=COLORS['text_secondary'])
+            
+            add_bar_labels(bars1, revenue_values)
+            add_bar_labels(bars2, expenses_values)
+            add_bar_labels(bars3, profit_values)
+            
+            # Styling
+            ax.set_xticks(x)
+            # Format month labels nicely (MM/YYYY)
+            month_labels = []
+            for m in all_months:
+                try:
+                    month_labels.append(datetime.strptime(m, '%Y-%m').strftime('%m/%Y'))
+                except:
+                    month_labels.append(m)
+            ax.set_xticklabels(month_labels, rotation=45, ha='right', fontsize=9)
+            
+            ax.set_ylabel('Betrag (EUR)', fontsize=11)
+            title = 'Einnahmen vs. Ausgaben'
+            if year:
+                title += f' - {year}'
+            ax.set_title(title, fontsize=16, fontweight='bold', color=COLORS['text_primary'], pad=15)
+            
+            # Legend
+            ax.legend(loc='upper right', framealpha=0.9, fontsize=10)
+            
+            # Zero line
+            ax.axhline(y=0, color=COLORS['text_muted'], linewidth=1.0, linestyle='-', alpha=0.5)
+            
+            # Format y-axis as EUR
+            def format_euro(x, p):
+                if abs(x) >= 1000000:
+                    return f'{x/1000000:.1f}M'
+                elif abs(x) >= 1000:
+                    return f'{x/1000:.0f}k'
+                else:
+                    return f'{x:.0f}'
+            ax.yaxis.set_major_formatter(plt.FuncFormatter(format_euro))
+            
+            # Tight layout
+            self.chart.canvas.fig.tight_layout()
+            self.chart.canvas.draw()
+            
+            print("[Cross-Chart] Chart drawn successfully!")
+            
+        except Exception as e:
+            print(f"ERROR in _draw_cross_chart: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def _show_cross_table(self, revenue_df: pd.DataFrame, expenses_df: pd.DataFrame):
+        """Show cross-dashboard table with monthly breakdown."""
+        try:
+            # Aggregate monthly
+            def aggregate_monthly(df):
+                if df.empty:
+                    return {}
+                df = df.copy()
+                df['YearMonth'] = df['Date'].dt.strftime('%Y-%m')
+                return df.groupby('YearMonth')['Amount'].sum().to_dict()
+            
+            revenue_by_month = aggregate_monthly(revenue_df)
+            expenses_by_month = aggregate_monthly(expenses_df)
+            
+            # Get all months
+            all_months = sorted(set(revenue_by_month.keys()) | set(expenses_by_month.keys()), reverse=True)
+            
+            if not all_months:
+                self.table.setRowCount(1)
+                self.table.setColumnCount(1)
+                self.table.setHorizontalHeaderLabels(['Information'])
+                self.table.setItem(0, 0, QTableWidgetItem("Keine Daten vorhanden"))
+                return
+            
+            # Setup table
+            self.table.setRowCount(len(all_months) + 1)  # +1 for totals
+            self.table.setColumnCount(5)
+            self.table.setHorizontalHeaderLabels(['Monat', 'Einnahmen', 'Ausgaben', 'Profit', 'Marge'])
+            
+            total_revenue = 0
+            total_expenses = 0
+            
+            for i, month in enumerate(all_months):
+                rev = revenue_by_month.get(month, 0)
+                exp = expenses_by_month.get(month, 0)
+                profit = rev - exp
+                margin = (profit / rev * 100) if rev > 0 else 0
+                
+                total_revenue += rev
+                total_expenses += exp
+                
+                # Format month display
+                month_display = datetime.strptime(month, '%Y-%m').strftime('%B %Y')
+                
+                # Month
+                self.table.setItem(i, 0, QTableWidgetItem(month_display))
+                
+                # Revenue
+                rev_item = QTableWidgetItem(f"EUR {rev:,.2f}".replace(',', '.'))
+                rev_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                self.table.setItem(i, 1, rev_item)
+                
+                # Expenses
+                exp_item = QTableWidgetItem(f"EUR {exp:,.2f}".replace(',', '.'))
+                exp_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                self.table.setItem(i, 2, exp_item)
+                
+                # Profit
+                profit_item = QTableWidgetItem(f"EUR {profit:,.2f}".replace(',', '.'))
+                profit_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                if profit < 0:
+                    profit_item.setForeground(Qt.GlobalColor.red)
+                else:
+                    profit_item.setForeground(Qt.GlobalColor.green)
+                self.table.setItem(i, 3, profit_item)
+                
+                # Margin
+                margin_item = QTableWidgetItem(f"{margin:+.1f}%")
+                margin_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                if margin < 0:
+                    margin_item.setForeground(Qt.GlobalColor.red)
+                else:
+                    margin_item.setForeground(Qt.GlobalColor.green)
+                self.table.setItem(i, 4, margin_item)
+            
+            # Add totals row
+            total_row = len(all_months)
+            total_profit = total_revenue - total_expenses
+            total_margin = (total_profit / total_revenue * 100) if total_revenue > 0 else 0
+            
+            total_label = QTableWidgetItem("GESAMT")
+            total_label.setFont(QFont("", -1, QFont.Weight.Bold))
+            self.table.setItem(total_row, 0, total_label)
+            
+            for col, (val, is_profit) in enumerate([
+                (total_revenue, False), 
+                (total_expenses, False), 
+                (total_profit, True),
+                (total_margin, True)
+            ], 1):
+                if col < 4:
+                    item = QTableWidgetItem(f"EUR {val:,.2f}".replace(',', '.'))
+                else:
+                    item = QTableWidgetItem(f"{val:+.1f}%")
+                item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                item.setFont(QFont("", -1, QFont.Weight.Bold))
+                if is_profit:
+                    if val < 0:
+                        item.setForeground(Qt.GlobalColor.red)
+                    else:
+                        item.setForeground(Qt.GlobalColor.green)
+                self.table.setItem(total_row, col, item)
+            
+            self.table.resizeColumnsToContents()
+            
+        except Exception as e:
+            print(f"ERROR in _show_cross_table: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def _show_empty_cross_dashboard(self):
+        """Show empty state for cross-dashboard."""
         self.chart.canvas.clear_chart()
         self.chart.canvas.ax.text(
             0.5, 0.5, 
-            '🔄 Cross-Dashboard Analyse\n\nProfit = Einnahmen - Ausgaben\n\nKommt nach Marketing & Ausgaben...',
+            'Keine Daten vorhanden\n\nBitte laden Sie Einnahmen und/oder Ausgaben\nim jeweiligen Dashboard.',
             ha='center', va='center',
             fontsize=14, color=COLORS['text_muted'],
             transform=self.chart.canvas.ax.transAxes
         )
         self.chart.canvas.draw()
         
-        self.table.setRowCount(0)
+        self.table.setRowCount(1)
         self.table.setColumnCount(1)
-        self.table.setHorizontalHeaderLabels(['Cross-Dashboard'])
+        self.table.setHorizontalHeaderLabels(['Information'])
+        self.table.setItem(0, 0, QTableWidgetItem("Keine Daten - Bitte zuerst Einnahmen oder Ausgaben importieren"))
 
 
 def main():
