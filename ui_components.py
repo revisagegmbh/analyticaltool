@@ -3,12 +3,13 @@ UI Components Module - KPI Cards, Date Range Filter, Search, and Custom Widgets
 Phase 3: Added Search/Filter Bar, Category Editor, Export Buttons
 """
 
-from datetime import datetime
-from typing import Optional, Callable, Dict, Any
+from datetime import datetime, timedelta
+from typing import Optional, Callable, Dict, Any, Tuple
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame,
     QComboBox, QDateEdit, QPushButton, QGridLayout, QSizePolicy,
-    QLineEdit, QSpinBox, QDoubleSpinBox, QMenu, QFileDialog, QMessageBox
+    QLineEdit, QSpinBox, QDoubleSpinBox, QMenu, QFileDialog, QMessageBox,
+    QScrollArea, QCheckBox, QDialog, QDialogButtonBox
 )
 from PyQt6.QtCore import Qt, QDate, pyqtSignal
 from PyQt6.QtGui import QFont, QAction
@@ -718,11 +719,11 @@ class CategoryEditorDialog(QWidget):
 
 
 # =============================================================================
-# Analytics Panel (Phase A: Analytics Engine)
+# Analytics Panel (Phase A: Analytics Engine - Extended Horizons)
 # =============================================================================
 
 class AnalyticsPanel(QWidget):
-    """Panel displaying forecasts and recommendations."""
+    """Panel displaying forecasts and recommendations with extended horizons."""
     
     forecast_requested = pyqtSignal(str)  # Forecast method name
     
@@ -730,20 +731,30 @@ class AnalyticsPanel(QWidget):
         super().__init__(parent)
         self.recommendations = []
         self.forecast_data = None
+        self.extended_forecasts = {}
         self.init_ui()
     
     def init_ui(self):
-        """Initialize the analytics panel."""
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(12)
+        """Initialize the analytics panel with scrollable content."""
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(8)
         
-        # Header with toggle
-        header_layout = QHBoxLayout()
+        # Header (fixed, not scrolling)
+        header_frame = QFrame()
+        header_frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {COLORS['bg_medium']};
+                border-bottom: 1px solid {COLORS['border']};
+                padding: 4px;
+            }}
+        """)
+        header_layout = QHBoxLayout(header_frame)
+        header_layout.setContentsMargins(8, 4, 8, 4)
         
-        title = QLabel("📊 Analytics & Prognosen")
+        title = QLabel("📊 Analytics")
         title.setStyleSheet(f"""
-            font-size: 16px;
+            font-size: 14px;
             font-weight: 700;
             color: {COLORS['text_primary']};
         """)
@@ -751,49 +762,152 @@ class AnalyticsPanel(QWidget):
         
         header_layout.addStretch()
         
-        # Forecast method selector
-        method_label = QLabel("Methode:")
-        method_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
-        header_layout.addWidget(method_label)
-        
+        # Compact method selector
         self.method_combo = QComboBox()
         self.method_combo.addItems([
-            "Kombinierte Prognose",
-            "Lineare Regression",
-            "Exponentielle Glättung",
-            "Gleitender Durchschnitt",
-            "Wachstumsrate"
+            "Jahrestrend",  # NEW: Best for quarterly data with high variance
+            "Kombiniert",
+            "Monte Carlo",
+            "Ensemble",
+            "Linear",
+            "Exponentiell",
+            "Gleitend",
+            "Wachstum"
         ])
+        self.method_combo.setMaximumWidth(120)
         self.method_combo.currentTextChanged.connect(self._on_method_changed)
-        self.method_combo.setMinimumWidth(180)
         header_layout.addWidget(self.method_combo)
         
-        layout.addLayout(header_layout)
+        main_layout.addWidget(header_frame)
         
-        # Content area with recommendations and forecast info
-        content_frame = QFrame()
-        content_frame.setStyleSheet(f"""
-            QFrame {{
-                background-color: {COLORS['bg_medium']};
-                border: 1px solid {COLORS['border']};
-                border-radius: 8px;
+        # Scrollable content area
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll_area.setStyleSheet(f"""
+            QScrollArea {{
+                border: none;
+                background-color: transparent;
+            }}
+            QScrollBar:vertical {{
+                background-color: {COLORS['bg_dark']};
+                width: 8px;
+                border-radius: 4px;
+            }}
+            QScrollBar::handle:vertical {{
+                background-color: {COLORS['border']};
+                border-radius: 4px;
+                min-height: 30px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background-color: {COLORS['primary']};
             }}
         """)
-        content_layout = QVBoxLayout(content_frame)
-        content_layout.setContentsMargins(12, 12, 12, 12)
-        content_layout.setSpacing(8)
         
-        # Forecast summary
-        self.forecast_label = QLabel("Prognose wird berechnet...")
-        self.forecast_label.setStyleSheet(f"""
-            color: {COLORS['text_primary']};
-            font-size: 13px;
-            padding: 8px;
-            background-color: {COLORS['bg_light']};
-            border-radius: 6px;
+        # Content widget inside scroll area
+        content_widget = QWidget()
+        content_layout = QVBoxLayout(content_widget)
+        content_layout.setContentsMargins(8, 8, 8, 8)
+        content_layout.setSpacing(10)
+        
+        # === PROGNOSE-HORIZONTE ===
+        horizons_frame = QFrame()
+        horizons_frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {COLORS['bg_light']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 6px;
+            }}
         """)
-        self.forecast_label.setWordWrap(True)
-        content_layout.addWidget(self.forecast_label)
+        horizons_layout = QVBoxLayout(horizons_frame)
+        horizons_layout.setContentsMargins(10, 8, 10, 8)
+        horizons_layout.setSpacing(6)
+        
+        # Horizons title
+        horizons_title = QLabel("📅 Prognose-Horizonte")
+        horizons_title.setStyleSheet(f"""
+            font-size: 12px;
+            font-weight: 600;
+            color: {COLORS['text_primary']};
+            padding-bottom: 4px;
+        """)
+        horizons_layout.addWidget(horizons_title)
+        
+        # Grid for forecast horizons
+        self.horizons_grid = QGridLayout()
+        self.horizons_grid.setSpacing(4)
+        
+        # Create horizon labels (will be updated dynamically)
+        self.horizon_labels = {}
+        horizons = [
+            ('next_month', 'Nächster Monat'),
+            ('next_quarter', 'Nächstes Quartal'),
+            ('next_year', 'Nächstes Jahr'),
+            ('year_2', 'In 2 Jahren'),
+            ('year_3', 'In 3 Jahren'),
+        ]
+        
+        for i, (key, label) in enumerate(horizons):
+            # Label
+            lbl = QLabel(f"{label}:")
+            lbl.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
+            self.horizons_grid.addWidget(lbl, i, 0)
+            
+            # Value
+            val = QLabel("—")
+            val.setStyleSheet(f"""
+                color: {COLORS['text_primary']};
+                font-size: 12px;
+                font-weight: 600;
+            """)
+            val.setAlignment(Qt.AlignmentFlag.AlignRight)
+            self.horizons_grid.addWidget(val, i, 1)
+            self.horizon_labels[key] = val
+        
+        horizons_layout.addLayout(self.horizons_grid)
+        content_layout.addWidget(horizons_frame)
+        
+        # === TREND & KONFIDENZ ===
+        trend_frame = QFrame()
+        trend_frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {COLORS['bg_light']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 6px;
+            }}
+        """)
+        trend_layout = QVBoxLayout(trend_frame)
+        trend_layout.setContentsMargins(10, 8, 10, 8)
+        trend_layout.setSpacing(4)
+        
+        self.trend_label = QLabel("📈 Trend: —")
+        self.trend_label.setStyleSheet(f"""
+            font-size: 12px;
+            font-weight: 600;
+            color: {COLORS['text_primary']};
+        """)
+        trend_layout.addWidget(self.trend_label)
+        
+        self.confidence_label = QLabel("Konfidenz: —")
+        self.confidence_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
+        trend_layout.addWidget(self.confidence_label)
+        
+        self.method_info_label = QLabel("")
+        self.method_info_label.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 10px;")
+        self.method_info_label.setWordWrap(True)
+        trend_layout.addWidget(self.method_info_label)
+        
+        content_layout.addWidget(trend_frame)
+        
+        # === EMPFEHLUNGEN ===
+        rec_title = QLabel("💡 Empfehlungen")
+        rec_title.setStyleSheet(f"""
+            font-size: 12px;
+            font-weight: 600;
+            color: {COLORS['text_primary']};
+            padding-top: 4px;
+        """)
+        content_layout.addWidget(rec_title)
         
         # Recommendations container
         self.recommendations_container = QWidget()
@@ -802,54 +916,126 @@ class AnalyticsPanel(QWidget):
         self.recommendations_layout.setSpacing(6)
         content_layout.addWidget(self.recommendations_container)
         
-        layout.addWidget(content_frame)
+        # Spacer at bottom
+        content_layout.addStretch()
+        
+        scroll_area.setWidget(content_widget)
+        main_layout.addWidget(scroll_area)
     
     def _on_method_changed(self, method: str):
         """Handle forecast method change."""
         method_map = {
-            "Kombinierte Prognose": "combined",
-            "Lineare Regression": "linear",
-            "Exponentielle Glättung": "exponential",
-            "Gleitender Durchschnitt": "moving_average",
-            "Wachstumsrate": "growth_rate"
+            "Jahrestrend": "yearly_trend",  # NEW: Year-over-year trend analysis
+            "Kombiniert": "combined",
+            "Monte Carlo": "monte_carlo",
+            "Ensemble": "ensemble",
+            "Linear": "linear",
+            "Exponentiell": "exponential",
+            "Gleitend": "moving_average",
+            "Wachstum": "growth_rate"
         }
         self.forecast_requested.emit(method_map.get(method, "combined"))
     
     def update_forecast(self, forecast_data: Dict[str, Any]):
-        """Update the forecast display."""
+        """Update the forecast display with extended horizons."""
         self.forecast_data = forecast_data
         
-        if not forecast_data or not forecast_data.get('values'):
-            self.forecast_label.setText("Nicht genug Daten für Prognose")
+        if not forecast_data:
+            self._clear_horizons()
             return
         
-        method = forecast_data.get('method', 'Prognose')
+        # Get extended forecasts if available
+        extended = forecast_data.get('extended_horizons', {})
+        
+        # Update horizon values
+        horizons_map = {
+            'next_month': extended.get('next_month'),
+            'next_quarter': extended.get('next_quarter'),
+            'next_year': extended.get('next_year'),
+            'year_2': extended.get('year_2'),
+            'year_3': extended.get('year_3'),
+        }
+        
+        for key, value in horizons_map.items():
+            if value is not None and key in self.horizon_labels:
+                formatted = f"€{value:,.0f}".replace(',', '.')
+                self.horizon_labels[key].setText(formatted)
+                
+                # Color based on trend (compare to current)
+                if 'current_annual' in extended:
+                    current = extended['current_annual']
+                    if value > current * 1.05:
+                        self.horizon_labels[key].setStyleSheet(f"""
+                            color: {COLORS['kpi_positive']};
+                            font-size: 12px;
+                            font-weight: 600;
+                        """)
+                    elif value < current * 0.95:
+                        self.horizon_labels[key].setStyleSheet(f"""
+                            color: {COLORS['kpi_negative']};
+                            font-size: 12px;
+                            font-weight: 600;
+                        """)
+                    else:
+                        self.horizon_labels[key].setStyleSheet(f"""
+                            color: {COLORS['text_primary']};
+                            font-size: 12px;
+                            font-weight: 600;
+                        """)
+            else:
+                if key in self.horizon_labels:
+                    self.horizon_labels[key].setText("—")
+        
+        # Update trend and confidence
         interpretation = forecast_data.get('interpretation', {})
         trend = interpretation.get('trend', 'unbekannt')
         confidence = interpretation.get('confidence', 0)
         message = interpretation.get('message', '')
+        method = forecast_data.get('method', 'Prognose')
         
-        # Trend icon
-        trend_icon = "📈" if trend == "steigend" else ("📉" if trend == "fallend" else "➡️")
+        trend_icons = {
+            'steigend': '📈',
+            'fallend': '📉',
+            'stabil': '➡️',
+            'unbekannt': '❓'
+        }
+        trend_colors = {
+            'steigend': COLORS['kpi_positive'],
+            'fallend': COLORS['kpi_negative'],
+            'stabil': COLORS['text_primary'],
+            'unbekannt': COLORS['text_muted']
+        }
         
-        # Format forecast values
-        values = forecast_data.get('values', [])
-        periods = forecast_data.get('periods', [])
+        self.trend_label.setText(f"{trend_icons.get(trend, '❓')} Trend: {trend.capitalize()}")
+        self.trend_label.setStyleSheet(f"""
+            font-size: 12px;
+            font-weight: 600;
+            color: {trend_colors.get(trend, COLORS['text_primary'])};
+        """)
         
-        if values and periods:
-            next_value = values[0]
-            last_period = periods[-1] if periods else "?"
-            
-            forecast_text = f"""
-<b>{trend_icon} {method}</b><br>
-<span style='color: {COLORS["text_secondary"]}'>{message}</span><br><br>
-<b>Nächste Periode:</b> €{next_value:,.0f}<br>
-<b>Konfidenz:</b> {confidence:.0%} | <b>Trend:</b> {trend.capitalize()}
-""".replace(',', '.')
+        # Check for probability (Monte Carlo / Ensemble)
+        probability = interpretation.get('probability')
+        if probability is not None and probability != confidence:
+            prob_text = f"Wahrscheinlichkeit: {probability:.0%} | "
         else:
-            forecast_text = f"<b>{method}</b><br>{message}"
+            prob_text = ""
         
-        self.forecast_label.setText(forecast_text)
+        # Include data type info if available
+        data_type_label = forecast_data.get('data_type_label', '')
+        self.confidence_label.setText(f"{prob_text}Konfidenz: {confidence:.0%} | Methode: {method}")
+        
+        if data_type_label:
+            self.method_info_label.setText(f"{message}\nDatentyp: {data_type_label}")
+        else:
+            self.method_info_label.setText(message)
+    
+    def _clear_horizons(self):
+        """Clear all horizon values."""
+        for label in self.horizon_labels.values():
+            label.setText("—")
+        self.trend_label.setText("📊 Trend: Keine Daten")
+        self.confidence_label.setText("Konfidenz: —")
+        self.method_info_label.setText("Laden Sie Daten um Prognosen zu generieren")
     
     def update_recommendations(self, recommendations: list):
         """Update the recommendations display."""
@@ -863,20 +1049,19 @@ class AnalyticsPanel(QWidget):
         
         if not recommendations:
             no_rec = QLabel("✓ Keine dringenden Empfehlungen")
-            no_rec.setStyleSheet(f"color: {COLORS['kpi_positive']}; padding: 8px;")
+            no_rec.setStyleSheet(f"color: {COLORS['kpi_positive']}; padding: 6px; font-size: 11px;")
             self.recommendations_layout.addWidget(no_rec)
             return
         
-        # Show top 3 recommendations
-        for rec in recommendations[:3]:
+        # Show top 4 recommendations (compact)
+        for rec in recommendations[:4]:
             rec_widget = self._create_recommendation_widget(rec)
             self.recommendations_layout.addWidget(rec_widget)
     
     def _create_recommendation_widget(self, rec: Dict) -> QFrame:
-        """Create a widget for a single recommendation."""
+        """Create a compact widget for a recommendation."""
         frame = QFrame()
         
-        # Color based on severity
         severity = rec.get('severity', 'info')
         severity_colors = {
             'critical': COLORS['chart_red'],
@@ -890,17 +1075,16 @@ class AnalyticsPanel(QWidget):
         frame.setStyleSheet(f"""
             QFrame {{
                 background-color: {COLORS['bg_light']};
-                border-left: 4px solid {border_color};
+                border-left: 3px solid {border_color};
                 border-radius: 4px;
-                padding: 8px;
+                padding: 4px;
             }}
         """)
         
         layout = QVBoxLayout(frame)
-        layout.setContentsMargins(8, 6, 8, 6)
-        layout.setSpacing(4)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(2)
         
-        # Title with icon
         severity_icons = {
             'critical': '🚨',
             'high': '⚠️',
@@ -910,19 +1094,23 @@ class AnalyticsPanel(QWidget):
         }
         icon = severity_icons.get(severity, '•')
         
+        # Title (compact)
         title = QLabel(f"{icon} {rec.get('title', 'Empfehlung')}")
-        title.setStyleSheet(f"font-weight: 600; color: {COLORS['text_primary']};")
+        title.setStyleSheet(f"font-weight: 600; color: {COLORS['text_primary']}; font-size: 11px;")
         layout.addWidget(title)
         
-        # Message
-        msg = QLabel(rec.get('message', ''))
-        msg.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
+        # Message (truncated)
+        msg_text = rec.get('message', '')
+        if len(msg_text) > 100:
+            msg_text = msg_text[:97] + "..."
+        msg = QLabel(msg_text)
+        msg.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 10px;")
         msg.setWordWrap(True)
         layout.addWidget(msg)
         
-        # Action
+        # Action (compact)
         action = QLabel(f"→ {rec.get('action', '')}")
-        action.setStyleSheet(f"color: {COLORS['primary']}; font-size: 11px; font-style: italic;")
+        action.setStyleSheet(f"color: {COLORS['primary']}; font-size: 10px;")
         action.setWordWrap(True)
         layout.addWidget(action)
         
@@ -1003,4 +1191,981 @@ class ForecastChartOverlay:
             )
         
         return forecast_x
+
+
+# =============================================================================
+# Marketing Campaign Dialog
+# =============================================================================
+
+class CampaignDialog(QWidget):
+    """Dialog for adding/editing marketing campaigns."""
+    
+    campaign_saved = pyqtSignal(dict)  # Emitted when campaign is saved
+    dialog_closed = pyqtSignal()
+    
+    # Platform options
+    PLATFORMS = [
+        "Google Ads",
+        "Meta (Facebook/Instagram)",
+        "LinkedIn Ads",
+        "TikTok Ads",
+        "Twitter/X Ads",
+        "Pinterest Ads",
+        "Microsoft Ads",
+        "YouTube Ads",
+        "Sonstige"
+    ]
+    
+    def __init__(self, parent=None, campaign_data: Dict = None):
+        """Initialize campaign dialog.
+        
+        Args:
+            parent: Parent widget
+            campaign_data: Existing campaign data for editing (None for new)
+        """
+        super().__init__(parent)
+        self.campaign_data = campaign_data
+        self.is_edit = campaign_data is not None
+        self.init_ui()
+        
+        if self.is_edit:
+            self.populate_fields()
+    
+    def init_ui(self):
+        """Initialize the dialog UI."""
+        self.setWindowTitle("Kampagne hinzufügen" if not self.is_edit else "Kampagne bearbeiten")
+        self.setMinimumWidth(500)
+        
+        layout = QVBoxLayout(self)
+        layout.setSpacing(16)
+        layout.setContentsMargins(20, 20, 20, 20)
+        
+        # Title
+        title = QLabel("📈 Marketing-Kampagne" if not self.is_edit else "📈 Kampagne bearbeiten")
+        title.setStyleSheet(f"""
+            font-size: 18px;
+            font-weight: 700;
+            color: {COLORS['text_primary']};
+            padding-bottom: 8px;
+        """)
+        layout.addWidget(title)
+        
+        # Form container
+        form_frame = QFrame()
+        form_frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {COLORS['bg_light']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 8px;
+                padding: 12px;
+            }}
+        """)
+        form_layout = QGridLayout(form_frame)
+        form_layout.setSpacing(12)
+        form_layout.setContentsMargins(16, 16, 16, 16)
+        
+        row = 0
+        
+        # Campaign Name
+        form_layout.addWidget(self._create_label("Kampagnenname *"), row, 0)
+        self.name_input = QLineEdit()
+        self.name_input.setPlaceholderText("z.B. Black Friday 2024")
+        self._style_input(self.name_input)
+        form_layout.addWidget(self.name_input, row, 1)
+        row += 1
+        
+        # Platform
+        form_layout.addWidget(self._create_label("Plattform *"), row, 0)
+        self.platform_combo = QComboBox()
+        self.platform_combo.addItems(self.PLATFORMS)
+        self._style_combo(self.platform_combo)
+        form_layout.addWidget(self.platform_combo, row, 1)
+        row += 1
+        
+        # Period Type
+        form_layout.addWidget(self._create_label("Zeitraum-Typ"), row, 0)
+        self.period_type_combo = QComboBox()
+        self.period_type_combo.addItems(["Monat", "Quartal", "Jahr", "Benutzerdefiniert"])
+        self.period_type_combo.currentTextChanged.connect(self._on_period_type_changed)
+        self._style_combo(self.period_type_combo)
+        form_layout.addWidget(self.period_type_combo, row, 1)
+        row += 1
+        
+        # Period selector (for Month/Quarter/Year)
+        form_layout.addWidget(self._create_label("Periode"), row, 0)
+        self.period_container = QWidget()
+        period_layout = QHBoxLayout(self.period_container)
+        period_layout.setContentsMargins(0, 0, 0, 0)
+        period_layout.setSpacing(8)
+        
+        # Month selector
+        self.month_combo = QComboBox()
+        self.month_combo.addItems([
+            "Januar", "Februar", "März", "April", "Mai", "Juni",
+            "Juli", "August", "September", "Oktober", "November", "Dezember"
+        ])
+        self.month_combo.setCurrentIndex(datetime.now().month - 1)
+        self._style_combo(self.month_combo)
+        period_layout.addWidget(self.month_combo)
+        
+        # Quarter selector
+        self.quarter_combo = QComboBox()
+        self.quarter_combo.addItems(["Q1", "Q2", "Q3", "Q4"])
+        current_quarter = (datetime.now().month - 1) // 3
+        self.quarter_combo.setCurrentIndex(current_quarter)
+        self._style_combo(self.quarter_combo)
+        self.quarter_combo.setVisible(False)
+        period_layout.addWidget(self.quarter_combo)
+        
+        # Year selector
+        self.year_spin = QSpinBox()
+        self.year_spin.setRange(2020, 2030)
+        self.year_spin.setValue(datetime.now().year)
+        self._style_spin(self.year_spin)
+        period_layout.addWidget(self.year_spin)
+        
+        form_layout.addWidget(self.period_container, row, 1)
+        row += 1
+        
+        # Custom date range (hidden by default)
+        self.custom_date_container = QWidget()
+        custom_date_layout = QHBoxLayout(self.custom_date_container)
+        custom_date_layout.setContentsMargins(0, 0, 0, 0)
+        custom_date_layout.setSpacing(8)
+        
+        custom_date_layout.addWidget(QLabel("Von:"))
+        self.start_date_edit = QDateEdit()
+        self.start_date_edit.setCalendarPopup(True)
+        self.start_date_edit.setDate(QDate.currentDate().addMonths(-1))
+        self._style_date_edit(self.start_date_edit)
+        custom_date_layout.addWidget(self.start_date_edit)
+        
+        custom_date_layout.addWidget(QLabel("Bis:"))
+        self.end_date_edit = QDateEdit()
+        self.end_date_edit.setCalendarPopup(True)
+        self.end_date_edit.setDate(QDate.currentDate())
+        self._style_date_edit(self.end_date_edit)
+        custom_date_layout.addWidget(self.end_date_edit)
+        
+        self.custom_date_container.setVisible(False)
+        form_layout.addWidget(self.custom_date_container, row, 0, 1, 2)
+        row += 1
+        
+        # Separator
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setStyleSheet(f"background-color: {COLORS['border']};")
+        form_layout.addWidget(separator, row, 0, 1, 2)
+        row += 1
+        
+        # Budget
+        form_layout.addWidget(self._create_label("Budget (€) *"), row, 0)
+        self.budget_input = QDoubleSpinBox()
+        self.budget_input.setRange(0, 10000000)
+        self.budget_input.setDecimals(2)
+        self.budget_input.setPrefix("€ ")
+        self.budget_input.setSingleStep(100)
+        self._style_spin(self.budget_input)
+        form_layout.addWidget(self.budget_input, row, 1)
+        row += 1
+        
+        # Impressions
+        form_layout.addWidget(self._create_label("Impressionen"), row, 0)
+        self.impressions_input = QSpinBox()
+        self.impressions_input.setRange(0, 1000000000)
+        self.impressions_input.setSingleStep(1000)
+        self._style_spin(self.impressions_input)
+        form_layout.addWidget(self.impressions_input, row, 1)
+        row += 1
+        
+        # Clicks
+        form_layout.addWidget(self._create_label("Klicks"), row, 0)
+        self.clicks_input = QSpinBox()
+        self.clicks_input.setRange(0, 100000000)
+        self.clicks_input.setSingleStep(100)
+        self._style_spin(self.clicks_input)
+        form_layout.addWidget(self.clicks_input, row, 1)
+        row += 1
+        
+        # Conversions
+        form_layout.addWidget(self._create_label("Conversions"), row, 0)
+        self.conversions_input = QSpinBox()
+        self.conversions_input.setRange(0, 10000000)
+        self.conversions_input.setSingleStep(10)
+        self._style_spin(self.conversions_input)
+        form_layout.addWidget(self.conversions_input, row, 1)
+        row += 1
+        
+        # Revenue
+        form_layout.addWidget(self._create_label("Umsatz (€)"), row, 0)
+        self.revenue_input = QDoubleSpinBox()
+        self.revenue_input.setRange(0, 100000000)
+        self.revenue_input.setDecimals(2)
+        self.revenue_input.setPrefix("€ ")
+        self.revenue_input.setSingleStep(100)
+        self._style_spin(self.revenue_input)
+        form_layout.addWidget(self.revenue_input, row, 1)
+        row += 1
+        
+        # Notes
+        form_layout.addWidget(self._create_label("Notizen"), row, 0)
+        self.notes_input = QLineEdit()
+        self.notes_input.setPlaceholderText("Optionale Notizen zur Kampagne...")
+        self._style_input(self.notes_input)
+        form_layout.addWidget(self.notes_input, row, 1)
+        row += 1
+        
+        layout.addWidget(form_frame)
+        
+        # Live KPI Preview
+        kpi_frame = QFrame()
+        kpi_frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {COLORS['bg_medium']};
+                border: 1px solid {COLORS['primary']};
+                border-radius: 8px;
+                padding: 8px;
+            }}
+        """)
+        kpi_layout = QHBoxLayout(kpi_frame)
+        kpi_layout.setSpacing(16)
+        
+        kpi_title = QLabel("📊 Vorschau KPIs:")
+        kpi_title.setStyleSheet(f"color: {COLORS['text_secondary']}; font-weight: 600;")
+        kpi_layout.addWidget(kpi_title)
+        
+        self.roas_preview = QLabel("ROAS: —")
+        self.roas_preview.setStyleSheet(f"color: {COLORS['chart_green']}; font-weight: 600;")
+        kpi_layout.addWidget(self.roas_preview)
+        
+        self.ctr_preview = QLabel("CTR: —")
+        self.ctr_preview.setStyleSheet(f"color: {COLORS['chart_blue']}; font-weight: 600;")
+        kpi_layout.addWidget(self.ctr_preview)
+        
+        self.cpc_preview = QLabel("CPC: —")
+        self.cpc_preview.setStyleSheet(f"color: {COLORS['chart_orange']}; font-weight: 600;")
+        kpi_layout.addWidget(self.cpc_preview)
+        
+        kpi_layout.addStretch()
+        layout.addWidget(kpi_frame)
+        
+        # Connect inputs to update preview
+        self.budget_input.valueChanged.connect(self._update_kpi_preview)
+        self.impressions_input.valueChanged.connect(self._update_kpi_preview)
+        self.clicks_input.valueChanged.connect(self._update_kpi_preview)
+        self.revenue_input.valueChanged.connect(self._update_kpi_preview)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        
+        cancel_btn = QPushButton("Abbrechen")
+        cancel_btn.setProperty("class", "secondary")
+        cancel_btn.clicked.connect(self._on_cancel)
+        button_layout.addWidget(cancel_btn)
+        
+        save_btn = QPushButton("💾 Speichern" if not self.is_edit else "💾 Aktualisieren")
+        save_btn.clicked.connect(self._on_save)
+        button_layout.addWidget(save_btn)
+        
+        layout.addLayout(button_layout)
+    
+    def _create_label(self, text: str) -> QLabel:
+        """Create a styled form label."""
+        label = QLabel(text)
+        label.setStyleSheet(f"""
+            color: {COLORS['text_secondary']};
+            font-size: 12px;
+            font-weight: 500;
+        """)
+        return label
+    
+    def _style_input(self, widget: QLineEdit):
+        """Apply styling to input fields."""
+        widget.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: {COLORS['bg_elevated']};
+                color: {COLORS['text_primary']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 4px;
+                padding: 8px 12px;
+                font-size: 13px;
+            }}
+            QLineEdit:focus {{
+                border-color: {COLORS['primary']};
+            }}
+        """)
+    
+    def _style_combo(self, widget: QComboBox):
+        """Apply styling to combo boxes."""
+        widget.setStyleSheet(f"""
+            QComboBox {{
+                background-color: {COLORS['bg_elevated']};
+                color: {COLORS['text_primary']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 4px;
+                padding: 6px 10px;
+                min-width: 150px;
+            }}
+            QComboBox::drop-down {{
+                border: none;
+                width: 20px;
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: {COLORS['bg_medium']};
+                color: {COLORS['text_primary']};
+                selection-background-color: {COLORS['primary']};
+            }}
+        """)
+    
+    def _style_spin(self, widget):
+        """Apply styling to spin boxes."""
+        widget.setStyleSheet(f"""
+            QSpinBox, QDoubleSpinBox {{
+                background-color: {COLORS['bg_elevated']};
+                color: {COLORS['text_primary']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 4px;
+                padding: 6px 10px;
+                min-width: 150px;
+            }}
+            QSpinBox:focus, QDoubleSpinBox:focus {{
+                border-color: {COLORS['primary']};
+            }}
+        """)
+    
+    def _style_date_edit(self, widget: QDateEdit):
+        """Apply styling to date edits."""
+        widget.setStyleSheet(f"""
+            QDateEdit {{
+                background-color: {COLORS['bg_elevated']};
+                color: {COLORS['text_primary']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 4px;
+                padding: 6px 10px;
+            }}
+            QDateEdit:focus {{
+                border-color: {COLORS['primary']};
+            }}
+        """)
+    
+    def _on_period_type_changed(self, period_type: str):
+        """Handle period type change."""
+        self.month_combo.setVisible(period_type == "Monat")
+        self.quarter_combo.setVisible(period_type == "Quartal")
+        self.year_spin.setVisible(period_type in ["Monat", "Quartal", "Jahr"])
+        self.custom_date_container.setVisible(period_type == "Benutzerdefiniert")
+    
+    def _update_kpi_preview(self):
+        """Update KPI preview based on current inputs."""
+        budget = self.budget_input.value()
+        impressions = self.impressions_input.value()
+        clicks = self.clicks_input.value()
+        revenue = self.revenue_input.value()
+        
+        # ROAS
+        if budget > 0:
+            roas = revenue / budget
+            color = COLORS['chart_green'] if roas >= 2 else (
+                COLORS['chart_yellow'] if roas >= 1 else COLORS['chart_red']
+            )
+            self.roas_preview.setText(f"ROAS: {roas:.2f}")
+            self.roas_preview.setStyleSheet(f"color: {color}; font-weight: 600;")
+        else:
+            self.roas_preview.setText("ROAS: —")
+        
+        # CTR
+        if impressions > 0:
+            ctr = clicks / impressions * 100
+            self.ctr_preview.setText(f"CTR: {ctr:.2f}%")
+        else:
+            self.ctr_preview.setText("CTR: —")
+        
+        # CPC
+        if clicks > 0:
+            cpc = budget / clicks
+            self.cpc_preview.setText(f"CPC: €{cpc:.2f}")
+        else:
+            self.cpc_preview.setText("CPC: —")
+    
+    def _get_date_range(self) -> Tuple[datetime, datetime]:
+        """Get the date range based on period type selection."""
+        period_type = self.period_type_combo.currentText()
+        year = self.year_spin.value()
+        
+        if period_type == "Monat":
+            month = self.month_combo.currentIndex() + 1
+            start = datetime(year, month, 1)
+            # End of month
+            if month == 12:
+                end = datetime(year + 1, 1, 1) - timedelta(days=1)
+            else:
+                end = datetime(year, month + 1, 1) - timedelta(days=1)
+            return start, end.replace(hour=23, minute=59, second=59)
+        
+        elif period_type == "Quartal":
+            quarter = self.quarter_combo.currentIndex()
+            start_month = quarter * 3 + 1
+            start = datetime(year, start_month, 1)
+            end_month = start_month + 2
+            if end_month == 12:
+                end = datetime(year + 1, 1, 1) - timedelta(days=1)
+            else:
+                end = datetime(year, end_month + 1, 1) - timedelta(days=1)
+            return start, end.replace(hour=23, minute=59, second=59)
+        
+        elif period_type == "Jahr":
+            start = datetime(year, 1, 1)
+            end = datetime(year, 12, 31, 23, 59, 59)
+            return start, end
+        
+        else:  # Benutzerdefiniert
+            start = self.start_date_edit.date().toPyDate()
+            end = self.end_date_edit.date().toPyDate()
+            return datetime.combine(start, datetime.min.time()), \
+                   datetime.combine(end, datetime.max.time())
+    
+    def populate_fields(self):
+        """Populate fields with existing campaign data."""
+        if not self.campaign_data:
+            return
+        
+        self.name_input.setText(self.campaign_data.get('Campaign_Name', ''))
+        
+        platform = self.campaign_data.get('Platform', '')
+        idx = self.platform_combo.findText(platform)
+        if idx >= 0:
+            self.platform_combo.setCurrentIndex(idx)
+        
+        self.budget_input.setValue(float(self.campaign_data.get('Budget', 0)))
+        self.impressions_input.setValue(int(self.campaign_data.get('Impressions', 0)))
+        self.clicks_input.setValue(int(self.campaign_data.get('Clicks', 0)))
+        self.conversions_input.setValue(int(self.campaign_data.get('Conversions', 0)))
+        self.revenue_input.setValue(float(self.campaign_data.get('Revenue', 0)))
+        self.notes_input.setText(self.campaign_data.get('Notes', ''))
+        
+        # Set to custom dates if editing
+        self.period_type_combo.setCurrentText("Benutzerdefiniert")
+        start_date = self.campaign_data.get('Start_Date')
+        end_date = self.campaign_data.get('End_Date')
+        if start_date:
+            self.start_date_edit.setDate(QDate(start_date.year, start_date.month, start_date.day))
+        if end_date:
+            self.end_date_edit.setDate(QDate(end_date.year, end_date.month, end_date.day))
+        
+        self._update_kpi_preview()
+    
+    def _on_save(self):
+        """Save the campaign."""
+        # Validate
+        name = self.name_input.text().strip()
+        if not name:
+            QMessageBox.warning(self, "Fehler", "Bitte geben Sie einen Kampagnennamen ein.")
+            return
+        
+        budget = self.budget_input.value()
+        if budget <= 0:
+            QMessageBox.warning(self, "Fehler", "Bitte geben Sie ein Budget > 0 ein.")
+            return
+        
+        start_date, end_date = self._get_date_range()
+        
+        campaign_data = {
+            'name': name,
+            'platform': self.platform_combo.currentText(),
+            'period_type': self.period_type_combo.currentText(),
+            'start_date': start_date,
+            'end_date': end_date,
+            'budget': budget,
+            'impressions': self.impressions_input.value(),
+            'clicks': self.clicks_input.value(),
+            'conversions': self.conversions_input.value(),
+            'revenue': self.revenue_input.value(),
+            'notes': self.notes_input.text()
+        }
+        
+        # Include ID if editing
+        if self.is_edit and self.campaign_data:
+            campaign_data['id'] = self.campaign_data.get('ID')
+        
+        self.campaign_saved.emit(campaign_data)
+    
+    def _on_cancel(self):
+        """Cancel and close dialog."""
+        self.dialog_closed.emit()
+
+
+# =============================================================================
+# Manual Entry Dialog
+# =============================================================================
+
+class ManualEntryDialog(QDialog):
+    """Dialog for manual data entry with period selection (Month/Quarter/Year).
+    
+    Supports both creating new entries and editing existing ones.
+    """
+    
+    entry_saved = pyqtSignal(dict)  # Emitted when entry is saved (new or updated)
+    entry_deleted = pyqtSignal(str)  # Emitted when entry is deleted (expense_id)
+    
+    MONTHS = [
+        "Januar", "Februar", "März", "April", "Mai", "Juni",
+        "Juli", "August", "September", "Oktober", "November", "Dezember"
+    ]
+    
+    QUARTERS = ["Q1 (Jan-Mär)", "Q2 (Apr-Jun)", "Q3 (Jul-Sep)", "Q4 (Okt-Dez)"]
+    
+    def __init__(self, parent=None, dashboard_type: str = "revenue", 
+                 existing_data: Dict = None):
+        """Initialize manual entry dialog.
+        
+        Args:
+            parent: Parent widget
+            dashboard_type: 'revenue' or 'expenses'
+            existing_data: Existing entry data for editing (None for new entry)
+        """
+        super().__init__(parent)
+        self.dashboard_type = dashboard_type
+        self.existing_data = existing_data
+        self.is_edit = existing_data is not None
+        self.expense_id = existing_data.get('ID') if existing_data else None
+        self.init_ui()
+        
+        # Populate fields if editing
+        if self.is_edit:
+            self._populate_from_existing()
+    
+    def init_ui(self):
+        """Initialize the dialog UI."""
+        title_prefix = "Einnahme" if self.dashboard_type == "revenue" else "Ausgabe"
+        action = "bearbeiten" if self.is_edit else "manuell eingeben"
+        self.setWindowTitle(f"{title_prefix} {action}")
+        self.setMinimumWidth(400)
+        self.setModal(True)
+        
+        layout = QVBoxLayout(self)
+        layout.setSpacing(16)
+        layout.setContentsMargins(20, 20, 20, 20)
+        
+        # Title
+        icon = "✏️" if self.is_edit else ("💰" if self.dashboard_type == "revenue" else "💸")
+        title_text = f"{title_prefix} bearbeiten" if self.is_edit else f"{title_prefix} manuell erfassen"
+        title = QLabel(f"{icon} {title_text}")
+        title.setStyleSheet(f"""
+            font-size: 18px;
+            font-weight: 700;
+            color: {COLORS['text_primary']};
+            padding-bottom: 8px;
+        """)
+        layout.addWidget(title)
+        
+        # Form container
+        form_frame = QFrame()
+        form_frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {COLORS['bg_light']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 8px;
+                padding: 12px;
+            }}
+        """)
+        form_layout = QGridLayout(form_frame)
+        form_layout.setSpacing(12)
+        form_layout.setContentsMargins(16, 16, 16, 16)
+        
+        row = 0
+        
+        # Period Type Selection
+        form_layout.addWidget(self._create_label("Zeitraum-Typ *"), row, 0)
+        self.period_type_combo = QComboBox()
+        self.period_type_combo.addItems(["Monat", "Quartal", "Jahr"])
+        self._style_combo(self.period_type_combo)
+        self.period_type_combo.currentTextChanged.connect(self._on_period_type_changed)
+        form_layout.addWidget(self.period_type_combo, row, 1)
+        row += 1
+        
+        # Year Selection
+        form_layout.addWidget(self._create_label("Jahr *"), row, 0)
+        self.year_spinbox = QSpinBox()
+        self.year_spinbox.setRange(2015, 2035)
+        self.year_spinbox.setValue(datetime.now().year)
+        self._style_spinbox(self.year_spinbox)
+        form_layout.addWidget(self.year_spinbox, row, 1)
+        row += 1
+        
+        # Month Selection (visible for "Monat")
+        self.month_label = self._create_label("Monat *")
+        form_layout.addWidget(self.month_label, row, 0)
+        self.month_combo = QComboBox()
+        self.month_combo.addItems(self.MONTHS)
+        self.month_combo.setCurrentIndex(datetime.now().month - 1)
+        self._style_combo(self.month_combo)
+        form_layout.addWidget(self.month_combo, row, 1)
+        row += 1
+        
+        # Quarter Selection (hidden by default)
+        self.quarter_label = self._create_label("Quartal *")
+        form_layout.addWidget(self.quarter_label, row, 0)
+        self.quarter_combo = QComboBox()
+        self.quarter_combo.addItems(self.QUARTERS)
+        current_quarter = (datetime.now().month - 1) // 3
+        self.quarter_combo.setCurrentIndex(current_quarter)
+        self._style_combo(self.quarter_combo)
+        form_layout.addWidget(self.quarter_combo, row, 1)
+        self.quarter_label.setVisible(False)
+        self.quarter_combo.setVisible(False)
+        row += 1
+        
+        # Amount Input
+        amount_label_text = "Betrag (EUR) *"
+        form_layout.addWidget(self._create_label(amount_label_text), row, 0)
+        self.amount_spinbox = QDoubleSpinBox()
+        self.amount_spinbox.setRange(0.01, 99999999.99)
+        self.amount_spinbox.setDecimals(2)
+        self.amount_spinbox.setSuffix(" €")
+        self.amount_spinbox.setValue(0.00)
+        self._style_double_spinbox(self.amount_spinbox)
+        form_layout.addWidget(self.amount_spinbox, row, 1)
+        row += 1
+        
+        # Description (optional)
+        form_layout.addWidget(self._create_label("Beschreibung"), row, 0)
+        self.description_input = QLineEdit()
+        self.description_input.setPlaceholderText("z.B. Umsatz März 2021")
+        self._style_input(self.description_input)
+        form_layout.addWidget(self.description_input, row, 1)
+        row += 1
+        
+        layout.addWidget(form_frame)
+        
+        # Info text
+        info_label = QLabel("* Pflichtfelder")
+        info_label.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 11px;")
+        layout.addWidget(info_label)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        
+        # Delete button (only in edit mode)
+        if self.is_edit:
+            self.delete_btn = QPushButton("Löschen")
+            self.delete_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {COLORS['kpi_negative']};
+                    color: white;
+                    border: none;
+                    border-radius: 6px;
+                    padding: 10px 24px;
+                    font-weight: 600;
+                    font-size: 14px;
+                }}
+                QPushButton:hover {{
+                    background-color: #ff4444;
+                }}
+            """)
+            self.delete_btn.clicked.connect(self._on_delete)
+            button_layout.addWidget(self.delete_btn)
+        
+        button_layout.addStretch()
+        
+        self.cancel_btn = QPushButton("Abbrechen")
+        self.cancel_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {COLORS['bg_elevated']};
+                color: {COLORS['text_secondary']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 6px;
+                padding: 10px 24px;
+                font-weight: 600;
+                font-size: 14px;
+            }}
+            QPushButton:hover {{
+                background-color: {COLORS['bg_light']};
+            }}
+        """)
+        self.cancel_btn.clicked.connect(self.reject)
+        button_layout.addWidget(self.cancel_btn)
+        
+        save_text = "Aktualisieren" if self.is_edit else "Speichern"
+        self.save_btn = QPushButton(save_text)
+        self.save_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {COLORS['primary']};
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 10px 24px;
+                font-weight: 600;
+                font-size: 14px;
+            }}
+            QPushButton:hover {{
+                background-color: {COLORS['primary_light']};
+            }}
+        """)
+        self.save_btn.clicked.connect(self._on_save)
+        button_layout.addWidget(self.save_btn)
+        
+        layout.addLayout(button_layout)
+        
+        # Apply dialog styling
+        self.setStyleSheet(f"""
+            QDialog {{
+                background-color: {COLORS['bg_medium']};
+            }}
+        """)
+    
+    def _create_label(self, text: str) -> QLabel:
+        """Create a styled form label."""
+        label = QLabel(text)
+        label.setStyleSheet(f"""
+            color: {COLORS['text_secondary']};
+            font-weight: 600;
+            font-size: 13px;
+        """)
+        return label
+    
+    def _style_combo(self, combo: QComboBox):
+        """Apply styling to combo box."""
+        combo.setStyleSheet(f"""
+            QComboBox {{
+                background-color: {COLORS['bg_elevated']};
+                color: {COLORS['text_primary']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 6px;
+                padding: 8px 12px;
+                font-size: 14px;
+                min-width: 200px;
+            }}
+            QComboBox:hover {{
+                border-color: {COLORS['primary']};
+            }}
+            QComboBox::drop-down {{
+                border: none;
+                width: 30px;
+            }}
+            QComboBox::down-arrow {{
+                image: none;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 6px solid {COLORS['text_secondary']};
+                margin-right: 10px;
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: {COLORS['bg_medium']};
+                color: {COLORS['text_primary']};
+                selection-background-color: {COLORS['primary']};
+                border: 1px solid {COLORS['border']};
+            }}
+        """)
+    
+    def _style_spinbox(self, spinbox: QSpinBox):
+        """Apply styling to spin box."""
+        spinbox.setStyleSheet(f"""
+            QSpinBox {{
+                background-color: {COLORS['bg_elevated']};
+                color: {COLORS['text_primary']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 6px;
+                padding: 8px 12px;
+                font-size: 14px;
+                min-width: 200px;
+            }}
+            QSpinBox:hover {{
+                border-color: {COLORS['primary']};
+            }}
+            QSpinBox::up-button, QSpinBox::down-button {{
+                width: 20px;
+                border: none;
+                background-color: {COLORS['bg_light']};
+            }}
+        """)
+    
+    def _style_double_spinbox(self, spinbox: QDoubleSpinBox):
+        """Apply styling to double spin box."""
+        spinbox.setStyleSheet(f"""
+            QDoubleSpinBox {{
+                background-color: {COLORS['bg_elevated']};
+                color: {COLORS['text_primary']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 6px;
+                padding: 8px 12px;
+                font-size: 14px;
+                min-width: 200px;
+            }}
+            QDoubleSpinBox:hover {{
+                border-color: {COLORS['primary']};
+            }}
+            QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {{
+                width: 20px;
+                border: none;
+                background-color: {COLORS['bg_light']};
+            }}
+        """)
+    
+    def _style_input(self, input_widget: QLineEdit):
+        """Apply styling to line edit."""
+        input_widget.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: {COLORS['bg_elevated']};
+                color: {COLORS['text_primary']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 6px;
+                padding: 8px 12px;
+                font-size: 14px;
+                min-width: 200px;
+            }}
+            QLineEdit:hover {{
+                border-color: {COLORS['primary']};
+            }}
+            QLineEdit:focus {{
+                border-color: {COLORS['primary']};
+            }}
+            QLineEdit::placeholder {{
+                color: {COLORS['text_muted']};
+            }}
+        """)
+    
+    def _on_period_type_changed(self, period_type: str):
+        """Handle period type selection change."""
+        is_month = period_type == "Monat"
+        is_quarter = period_type == "Quartal"
+        
+        self.month_label.setVisible(is_month)
+        self.month_combo.setVisible(is_month)
+        self.quarter_label.setVisible(is_quarter)
+        self.quarter_combo.setVisible(is_quarter)
+        
+        # Adjust dialog size
+        self.adjustSize()
+    
+    def _populate_from_existing(self):
+        """Populate form fields from existing data."""
+        if not self.existing_data:
+            return
+        
+        # Set amount
+        amount = self.existing_data.get('Amount', 0)
+        self.amount_spinbox.setValue(float(amount))
+        
+        # Set description
+        description = self.existing_data.get('Description', '')
+        self.description_input.setText(description)
+        
+        # Set PeriodType if available
+        period_type = self.existing_data.get('PeriodType', 'monthly')
+        period_type_map = {
+            'monthly': 'Monat',
+            'quarterly': 'Quartal',
+            'yearly': 'Jahr'
+        }
+        period_type_display = period_type_map.get(period_type, 'Monat')
+        index = self.period_type_combo.findText(period_type_display)
+        if index >= 0:
+            self.period_type_combo.setCurrentIndex(index)
+            self._on_period_type_changed(period_type_display)
+        
+        # Parse date to set year and month/quarter
+        date_val = self.existing_data.get('Date')
+        if date_val is not None:
+            # Convert to datetime if needed
+            if hasattr(date_val, 'year'):
+                year = date_val.year
+                month = date_val.month
+            else:
+                # Try parsing string
+                try:
+                    from datetime import datetime as dt
+                    if isinstance(date_val, str):
+                        date_val = dt.strptime(date_val[:10], '%Y-%m-%d')
+                    year = date_val.year
+                    month = date_val.month
+                except:
+                    year = datetime.now().year
+                    month = datetime.now().month
+            
+            self.year_spinbox.setValue(year)
+            self.month_combo.setCurrentIndex(month - 1)
+            
+            # Determine quarter
+            quarter = (month - 1) // 3
+            self.quarter_combo.setCurrentIndex(quarter)
+    
+    def _on_delete(self):
+        """Handle delete button click."""
+        reply = QMessageBox.question(
+            self,
+            "Eintrag löschen",
+            "Möchten Sie diesen Eintrag wirklich löschen?\n\n"
+            "Diese Aktion kann nicht rückgängig gemacht werden.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            self.entry_deleted.emit(self.expense_id)
+            self.accept()
+    
+    def _on_save(self):
+        """Validate and save the entry."""
+        amount = self.amount_spinbox.value()
+        
+        if amount <= 0:
+            QMessageBox.warning(
+                self,
+                "Eingabefehler",
+                "Bitte geben Sie einen Betrag größer als 0 ein."
+            )
+            return
+        
+        # Calculate date based on period type
+        year = self.year_spinbox.value()
+        period_type = self.period_type_combo.currentText()
+        
+        if period_type == "Monat":
+            month = self.month_combo.currentIndex() + 1
+            # Middle of month
+            entry_date = datetime(year, month, 15)
+            description_default = f"{self.MONTHS[month-1]} {year}"
+        elif period_type == "Quartal":
+            quarter = self.quarter_combo.currentIndex() + 1
+            # Middle of quarter (month 2, 5, 8, 11)
+            middle_month = (quarter - 1) * 3 + 2
+            entry_date = datetime(year, middle_month, 15)
+            description_default = f"Q{quarter} {year}"
+        else:  # Jahr
+            # Middle of year
+            entry_date = datetime(year, 7, 1)
+            description_default = f"Jahr {year}"
+        
+        # Use custom description or default
+        description = self.description_input.text().strip()
+        if not description:
+            description = description_default
+        
+        # Map period type to standard format
+        period_type_map = {
+            'Monat': 'monthly',
+            'Quartal': 'quarterly',
+            'Jahr': 'yearly'
+        }
+        
+        # Create entry data
+        entry_data = {
+            'Date': entry_date,
+            'Amount': amount,
+            'Description': description,
+            'Source': 'Manuelle Eingabe',
+            'Category': 'Manuell',
+            'Vendor': '',
+            'Currency': 'EUR',
+            'PeriodType': period_type_map.get(period_type, 'monthly')  # NEW: Store period type
+        }
+        
+        # Include ID if editing
+        if self.is_edit and self.expense_id:
+            entry_data['ID'] = self.expense_id
+            entry_data['_is_update'] = True
+        
+        self.entry_saved.emit(entry_data)
+        self.accept()
 

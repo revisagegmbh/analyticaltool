@@ -46,7 +46,7 @@ from data_manager import DataManager
 from ui_components import (
     KPIPanel, DateRangeFilter, ViewSelector, 
     SearchFilterBar, ExportPanel, CategoryEditorDialog,
-    AnalyticsPanel
+    AnalyticsPanel, ManualEntryDialog
 )
 from charts import ExpenseChart
 
@@ -57,8 +57,8 @@ from analytics import ForecastEngine, RecommendationEngine
 class ExpenseTrackerApp(QMainWindow):
     """Main application window with Business Intelligence Dashboard."""
     
-    APP_NAME = "Rechnungsanalyse-Tool"
-    APP_VERSION = "3.1.0"  # Phase A: Analytics Engine
+    APP_NAME = "Business Intelligence Suite"
+    APP_VERSION = "3.2.1"  # Marketing Dashboard entfernt (noch nicht implementiert)
     
     def __init__(self):
         super().__init__()
@@ -70,8 +70,12 @@ class ExpenseTrackerApp(QMainWindow):
         self.setStyleSheet(MAIN_STYLESHEET)
         apply_matplotlib_style()
         
-        # Initialize data manager
-        self.data_manager = DataManager()
+        # Initialize data managers (separate for revenue and expenses)
+        self.data_manager = DataManager()  # Revenue data
+        self.expenses_data_manager = DataManager(
+            data_dir=Path(__file__).parent / "data",
+            data_file="expenses_costs.json"  # Separate file for expenses
+        )
         
         # Current filter state
         self.current_start_date = None
@@ -84,6 +88,10 @@ class ExpenseTrackerApp(QMainWindow):
         # Drill-down state
         self.drill_year = None
         self.drill_month = None
+        
+        # Table edit state
+        self._current_table_view = 'aggregated'
+        self._table_expense_ids = []
         
         # Setup UI
         self.init_ui()
@@ -106,23 +114,80 @@ class ExpenseTrackerApp(QMainWindow):
         # ===== Header Section =====
         header_layout = QHBoxLayout()
         
-        # Title
-        title_label = QLabel(self.APP_NAME)
-        title_label.setStyleSheet(f"""
-            font-size: 28px;
+        # App title
+        app_title = QLabel("🏢 Business Suite")
+        app_title.setStyleSheet(f"""
+            font-size: 20px;
             font-weight: 700;
-            color: {COLORS['text_primary']};
-            letter-spacing: -1px;
+            color: {COLORS['text_secondary']};
         """)
-        header_layout.addWidget(title_label)
+        header_layout.addWidget(app_title)
+        
+        # Dashboard selector dropdown
+        self.dashboard_selector = QComboBox()
+        self.dashboard_selector.addItems([
+            "📊 Einnahmenanalyse",
+            "💸 Ausgabenanalyse",
+            "🔄 Cross-Dashboard"
+        ])
+        # Hinweis: Marketing-Analyse vorübergehend deaktiviert (noch nicht implementiert)
+        self.dashboard_selector.setStyleSheet(f"""
+            QComboBox {{
+                background-color: {COLORS['bg_elevated']};
+                color: {COLORS['text_primary']};
+                border: 2px solid {COLORS['primary']};
+                border-radius: 6px;
+                padding: 8px 16px;
+                font-size: 16px;
+                font-weight: 600;
+                min-width: 220px;
+            }}
+            QComboBox:hover {{
+                border-color: {COLORS['primary_light']};
+                background-color: {COLORS['bg_light']};
+            }}
+            QComboBox::drop-down {{
+                border: none;
+                width: 30px;
+            }}
+            QComboBox::down-arrow {{
+                image: none;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 6px solid {COLORS['primary']};
+                margin-right: 10px;
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: {COLORS['bg_medium']};
+                color: {COLORS['text_primary']};
+                selection-background-color: {COLORS['primary']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 4px;
+                padding: 4px;
+            }}
+            QComboBox QAbstractItemView::item {{
+                padding: 8px 12px;
+                min-height: 30px;
+            }}
+            QComboBox QAbstractItemView::item:hover {{
+                background-color: {COLORS['bg_elevated']};
+            }}
+        """)
+        self.dashboard_selector.currentTextChanged.connect(self.on_dashboard_changed)
+        header_layout.addWidget(self.dashboard_selector)
         
         header_layout.addStretch()
         
-        # Action buttons
-        self.load_btn = QPushButton("📁 PDF Laden")
-        self.load_btn.setMinimumWidth(140)
-        self.load_btn.clicked.connect(self.load_pdfs)
-        header_layout.addWidget(self.load_btn)
+        # Dynamic action button (changes per dashboard)
+        self.action_btn = QPushButton("📁 PDF Laden")
+        self.action_btn.setMinimumWidth(140)
+        self.action_btn.clicked.connect(self.on_action_button_clicked)
+        header_layout.addWidget(self.action_btn)
+        
+        self.manual_entry_btn = QPushButton("✏️ Manuell eingeben")
+        self.manual_entry_btn.setMinimumWidth(160)
+        self.manual_entry_btn.clicked.connect(self.open_manual_entry)
+        header_layout.addWidget(self.manual_entry_btn)
         
         self.clear_btn = QPushButton("🗑️ Daten löschen")
         self.clear_btn.setProperty("class", "secondary")
@@ -131,6 +196,9 @@ class ExpenseTrackerApp(QMainWindow):
         header_layout.addWidget(self.clear_btn)
         
         main_layout.addLayout(header_layout)
+        
+        # Store current dashboard
+        self.current_dashboard = "revenue"
         
         # ===== KPI Cards Section =====
         self.kpi_panel = KPIPanel()
@@ -290,6 +358,8 @@ class ExpenseTrackerApp(QMainWindow):
                 alternate-background-color: {COLORS['bg_light']};
             }}
         """)
+        # Enable double-click to edit
+        self.table.doubleClicked.connect(self.on_table_double_click)
         table_layout.addWidget(self.table)
         
         splitter.addWidget(table_container)
@@ -301,9 +371,13 @@ class ExpenseTrackerApp(QMainWindow):
     
     def load_pdfs(self):
         """Load and parse PDF invoice files."""
+        # Determine which dashboard we're on
+        is_expenses = self.current_dashboard == "expenses"
+        dashboard_label = "Ausgaben" if is_expenses else "Einnahmen"
+        
         files, _ = QFileDialog.getOpenFileNames(
             self,
-            "PDF Rechnungen auswählen",
+            f"PDF {dashboard_label}-Rechnungen auswählen",
             "",
             "PDF Dateien (*.pdf)"
         )
@@ -316,7 +390,8 @@ class ExpenseTrackerApp(QMainWindow):
         
         for file_path in files:
             try:
-                expenses = self.parse_pdf(file_path)
+                # Parse with dashboard type for tagging
+                expenses = self.parse_pdf(file_path, dashboard_type=self.current_dashboard)
                 new_expenses.extend(expenses)
             except Exception as e:
                 errors.append(f"{Path(file_path).name}: {str(e)}")
@@ -329,21 +404,120 @@ class ExpenseTrackerApp(QMainWindow):
             )
         
         if new_expenses:
-            count = self.data_manager.add_expenses(new_expenses)
-            self.status_label.setText(
-                f"✓ {count} Rechnungen aus {len(files)} PDF(s) geladen"
-            )
+            # Use appropriate data manager
+            if is_expenses:
+                count = self.expenses_data_manager.add_expenses(new_expenses)
+                self.status_label.setText(
+                    f"✓ {count} Ausgaben aus {len(files)} PDF(s) geladen"
+                )
+                self.refresh_expenses_dashboard()
+            else:
+                count = self.data_manager.add_expenses(new_expenses)
+                self.status_label.setText(
+                    f"✓ {count} Einnahmen aus {len(files)} PDF(s) geladen"
+                )
+                self.refresh_all()
+            
             self.status_label.setStyleSheet(f"color: {COLORS['kpi_positive']};")
-            self.refresh_all()
         else:
             self.status_label.setText("Keine Rechnungsdaten in den PDFs gefunden")
             self.status_label.setStyleSheet(f"color: {COLORS['kpi_negative']};")
     
-    def parse_pdf(self, file_path: str) -> list:
-        """Parse a Revisage invoice PDF and extract net amount and date.
+    # Extended keywords for net amount detection (various invoice formats)
+    # Priority order: More specific keywords first, then general ones
+    NET_AMOUNT_KEYWORDS_PRIORITY = [
+        # HIGH PRIORITY: Keywords with "Gesamt/Total" context (more likely to be the final net amount)
+        r'Gesamt[\s-]*netto',
+        r'Gesamtbetrag[\s-]*netto',
+        r'Gesamtwert[\s-]*netto',
+        r'Gesamt[\s-]*Nettopreis',
+        r'Netto[\s-]*Gesamt',
+        r'Total[\s-]*net',
+        r'Net[\s-]*total',
+        r'Total[\s-]*excl\.?\s*VAT',
+        r'Gesamt\s*ohne\s*MwSt',
+        r'Gesamt\s*ohne\s*USt',
+        
+        # MEDIUM PRIORITY: Standard net amount keywords
+        r'Nettobetrag',
+        r'Netto[\s-]*Betrag',
+        r'Nettosumme',
+        r'Netto[\s-]*Summe',
+        r'Nettowert',
+        r'Summe[\s-]*netto',
+        r'Betrag[\s-]*netto',
+        r'Wert[\s-]*netto',
+        r'Zwischensumme[\s-]*netto',
+        r'Zw\.?[\s-]*Summe[\s-]*netto',
+        r'Rechnungsbetrag[\s-]*netto',
+        r'Rechnungssumme[\s-]*netto',
+        
+        # German: Without VAT/Tax keywords
+        r'Betrag\s*ohne\s*MwSt',
+        r'Summe\s*ohne\s*MwSt',
+        r'ohne\s*Umsatzsteuer',
+        r'exkl\.?\s*MwSt',
+        r'ex\.?\s*MwSt',
+        r'exkl\.?\s*USt',
+        r'ohne\s*USt',
+        r'Steuerbasis',
+        
+        # English: Net amount keywords
+        r'Net\s*amount',
+        r'Net\s*sum',
+        r'Net\s*value',
+        r'Amount\s*net',
+        r'Value\s*net',
+        r'Subtotal',
+        r'Sub[\s-]*total',
+        
+        # English: Excluding VAT keywords
+        r'Amount\s*excl\.?\s*VAT',
+        r'Excluding\s*VAT',
+        r'Amount\s*exclusive\s*VAT',
+        r'Exclusive\s*of\s*VAT',
+        r'VAT\s*excluded',
+        r'Net\s*of\s*VAT',
+        r'Pre[\s-]*tax\s*amount',
+        r'Before\s*tax',
+        r'Base\s*amount',
+        r'Tax\s*base',
+        r'excl\.?\s*VAT',
+        r'ex\.?\s*VAT',
+        r'EX[\s-]*VAT',
+        r'before\s*VAT',
+        r'excl\.?\s*tax',
+        r'before\s*tax',
+        r'pre[\s-]*tax',
+        r'amount\s*ex\s*tax',
+        
+        # LOW PRIORITY: Generic keywords (might match single items)
+        r'Netto',
+        r'Warenwert',
+        r'Zwischensumme',
+    ]
+    
+    # Patterns to EXCLUDE (single item prices, not totals)
+    EXCLUDE_PATTERNS = [
+        r'Einzelpreis',
+        r'Stückpreis',
+        r'Preis\s*pro',
+        r'je\s*Stück',
+        r'Unit\s*price',
+        r'Price\s*per',
+        r'Menge',
+        r'Qty',
+        r'Anzahl',
+    ]
+    
+    def parse_pdf(self, file_path: str, dashboard_type: str = 'revenue') -> list:
+        """Parse an invoice PDF and extract net amount and date.
+        
+        Supports various invoice formats with extended keyword detection.
         
         Args:
             file_path: Path to the PDF file.
+            dashboard_type: 'revenue' or 'expenses' to tag the entry.
             
         Returns:
             List of expense dictionaries.
@@ -357,115 +531,23 @@ class ExpenseTrackerApp(QMainWindow):
                 if not text:
                     continue
                 
-                # Extract invoice date (format: DD.MM.YYYY)
-                date_match = re.search(r'Datum\s+(\d{2}\.\d{2}\.\d{4})', text)
-                invoice_date = None
-                
-                if date_match:
-                    try:
-                        invoice_date = datetime.strptime(date_match.group(1), '%d.%m.%Y')
-                    except ValueError:
-                        pass
-                
-                # Fallback: find any date in DD.MM.YYYY format
+                # Extract invoice date (multiple formats)
+                invoice_date = self._extract_invoice_date(text)
                 if not invoice_date:
-                    date_match = re.search(r'\b(\d{2}\.\d{2}\.\d{4})\b', text)
-                    if date_match:
-                        try:
-                            invoice_date = datetime.strptime(date_match.group(1), '%d.%m.%Y')
-                        except ValueError:
-                            invoice_date = datetime.now()
-                    else:
-                        invoice_date = datetime.now()
+                    invoice_date = datetime.now()
                 
-                # Extract NET amount (without VAT)
-                # Strategy: 
-                # 1. Try to find direct net amount from "% von XXX" pattern
-                # 2. Fallback: Zwischensumme - MwSt. amount
-                # 3. Fallback: Endsumme for invoices without tax
+                # Extract NET amount using the extended keyword-based extraction
+                net_amount = self._extract_net_amount(text)
                 
-                net_amount = None
-                vat_amount = None
-                gross_amount = None
-                
-                # Method 1: Extract net amount directly from "% von [NET_AMOUNT] [VAT_AMOUNT]"
-                # Pattern matches: "% von 921,43 175,07" where 921,43 is net and 175,07 is VAT
-                vat_line_match = re.search(
-                    r'%\s*von\s+(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})\s+(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})',
-                    text
-                )
-                
-                if vat_line_match:
-                    # First amount after "% von" is the net amount
-                    net_str = vat_line_match.group(1)
-                    net_str = net_str.replace('.', '').replace(',', '.')
-                    try:
-                        net_amount = float(net_str)
-                    except ValueError:
-                        pass
-                    
-                    # Second amount is VAT (stored for reference)
-                    vat_str = vat_line_match.group(2)
-                    vat_str = vat_str.replace('.', '').replace(',', '.')
-                    try:
-                        vat_amount = float(vat_str)
-                    except ValueError:
-                        pass
-                
-                # Method 2: If direct extraction failed, calculate: Zwischensumme - VAT
+                # Fallback: Try to extract from Endsumme if no VAT info present
                 if not net_amount:
-                    # Get Zwischensumme (gross amount)
-                    zwischensumme_match = re.search(
-                        r'Zwischensumme\s+(?:EUR\s+)?(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})', 
-                        text
-                    )
-                    
-                    if zwischensumme_match:
-                        gross_str = zwischensumme_match.group(1)
-                        gross_str = gross_str.replace('.', '').replace(',', '.')
-                        try:
-                            gross_amount = float(gross_str)
-                        except ValueError:
-                            pass
-                    
-                    # Get VAT amount if not already found
-                    if not vat_amount:
-                        # Pattern for VAT line: numbers ending with VAT amount
-                        # Looking for pattern like "19,00 % von XXX YYY" where YYY is VAT
-                        vat_match = re.search(
-                            r'(?:19|20|7)[.,]00\s*%\s*von\s+[\d.,]+\s+(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})',
-                            text
-                        )
-                        if vat_match:
-                            vat_str = vat_match.group(1)
-                            vat_str = vat_str.replace('.', '').replace(',', '.')
-                            try:
-                                vat_amount = float(vat_str)
-                            except ValueError:
-                                pass
-                    
-                    # Calculate net = gross - VAT
-                    if gross_amount and vat_amount:
-                        net_amount = gross_amount - vat_amount
-                    elif gross_amount and not vat_amount:
-                        # If no VAT found, check if invoice is VAT-exempt
-                        if 'MwSt.' not in text and 'Steuercode' not in text:
-                            net_amount = gross_amount
-                
-                # Method 3: Fallback to Endsumme for invoices without tax
-                if not net_amount:
-                    if 'MwSt.' not in text and 'Steuercode' not in text:
+                    if 'MwSt' not in text and 'USt' not in text and 'VAT' not in text:
                         endsumme_match = re.search(
-                            r'Endsumme\s+(?:EUR\s+)?(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})', 
-                            text
+                            r'(?:Endsumme|Gesamtsumme|Total|Summe)\s*[:\s€]*(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})', 
+                            text, re.IGNORECASE
                         )
                         if endsumme_match:
-                            amount_str = endsumme_match.group(1)
-                            amount_str = amount_str.replace('.', '').replace(',', '.')
-                            try:
-                                net_amount = float(amount_str)
-                            except ValueError:
-                                pass
+                            net_amount = self._parse_amount(endsumme_match.group(1))
                 
                 # Extract invoice number
                 invoice_number = "Unbekannt"
@@ -489,10 +571,179 @@ class ExpenseTrackerApp(QMainWindow):
                         'Source': Path(file_path).name,
                         'Vendor': vendor,
                         'Category': 'Uncategorized',
-                        'Currency': 'EUR'
+                        'Currency': 'EUR',
+                        'DashboardType': dashboard_type,  # Track which dashboard this belongs to
+                        'PeriodType': 'monthly'  # PDF imports are treated as monthly
                     })
         
         return expenses
+    
+    def _extract_invoice_date(self, text: str) -> datetime:
+        """Extract invoice date from text using multiple patterns.
+        
+        Args:
+            text: Invoice text content.
+            
+        Returns:
+            datetime object or None if not found.
+        """
+        # Pattern 1: "Datum" + date
+        date_patterns = [
+            (r'(?:Rechnungs)?[Dd]atum[:\s]+(\d{2})[./](\d{2})[./](\d{4})', '%d.%m.%Y'),
+            (r'(?:Invoice\s*)?[Dd]ate[:\s]+(\d{2})[./](\d{2})[./](\d{4})', '%d.%m.%Y'),
+            (r'(\d{2})[./](\d{2})[./](\d{4})', '%d.%m.%Y'),  # Fallback: any date
+            (r'(\d{4})-(\d{2})-(\d{2})', '%Y-%m-%d'),  # ISO format
+        ]
+        
+        for pattern, date_format in date_patterns:
+            match = re.search(pattern, text)
+            if match:
+                try:
+                    if date_format == '%d.%m.%Y':
+                        date_str = f"{match.group(1)}.{match.group(2)}.{match.group(3)}"
+                    else:
+                        date_str = f"{match.group(1)}-{match.group(2)}-{match.group(3)}"
+                    return datetime.strptime(date_str, date_format)
+                except ValueError:
+                    continue
+        
+        return None
+    
+    def _extract_net_amount(self, text: str) -> float:
+        """Extract net amount using extended keyword matching.
+        
+        Uses priority-based keyword search with context analysis.
+        Excludes single-item prices and prefers totals.
+        
+        Args:
+            text: Invoice text content.
+            
+        Returns:
+            Net amount as float or None.
+        """
+        # Normalize text for better matching
+        text_clean = text.replace('\n', ' ').replace('\r', ' ')
+        
+        # Amount pattern: supports both 1.234,56 (German) and 1,234.56 (English)
+        amount_pattern = r'(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})'
+        
+        candidates = []
+        
+        # Method 1: Priority keyword-based extraction
+        for priority, keyword in enumerate(self.NET_AMOUNT_KEYWORDS_PRIORITY):
+            # Search with context: keyword followed by optional separators and amount
+            pattern = rf'{keyword}\s*[:\s€$]*(?:EUR|USD|CHF)?\s*{amount_pattern}'
+            
+            for match in re.finditer(pattern, text_clean, re.IGNORECASE):
+                amount_str = match.group(1)
+                
+                # Get context around the match to check for exclusions
+                start = max(0, match.start() - 50)
+                end = min(len(text_clean), match.end() + 20)
+                context = text_clean[start:end]
+                
+                # Check if this looks like a single item price (exclude)
+                is_excluded = False
+                for exclude in self.EXCLUDE_PATTERNS:
+                    if re.search(exclude, context, re.IGNORECASE):
+                        is_excluded = True
+                        break
+                
+                if not is_excluded:
+                    amount = self._parse_amount(amount_str)
+                    if amount and amount > 0:
+                        candidates.append({
+                            'amount': amount,
+                            'priority': priority,
+                            'keyword': keyword,
+                            'context': context.strip()
+                        })
+        
+        # Method 2: Look for amount after "Netto" anywhere (case-insensitive)
+        netto_pattern = rf'\bnetto\b[^0-9]*{amount_pattern}'
+        for match in re.finditer(netto_pattern, text_clean, re.IGNORECASE):
+            amount = self._parse_amount(match.group(1))
+            if amount and amount > 0:
+                candidates.append({
+                    'amount': amount,
+                    'priority': 100,  # Lower priority
+                    'keyword': 'Netto (generic)',
+                    'context': ''
+                })
+        
+        # Method 3: Original "% von" pattern (Revisage format)
+        vat_line_match = re.search(
+            r'%\s*von\s+(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})\s+(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})',
+            text_clean
+        )
+        if vat_line_match:
+            amount = self._parse_amount(vat_line_match.group(1))
+            if amount and amount > 0:
+                candidates.append({
+                    'amount': amount,
+                    'priority': 5,  # High priority for specific format
+                    'keyword': '% von pattern',
+                    'context': ''
+                })
+        
+        # Method 4: Look for "Zwischensumme" or "Subtotal" patterns
+        for pattern in [r'Zwischensumme\s*[:\s€]*(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})',
+                        r'Subtotal\s*[:\s€$]*(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})']:
+            match = re.search(pattern, text_clean, re.IGNORECASE)
+            if match:
+                amount = self._parse_amount(match.group(1))
+                if amount and amount > 0:
+                    candidates.append({
+                        'amount': amount,
+                        'priority': 20,
+                        'keyword': 'Zwischensumme/Subtotal',
+                        'context': ''
+                    })
+        
+        # Select best candidate (lowest priority number = highest priority)
+        if candidates:
+            # Sort by priority (ascending), then by amount (descending for tie-breaker)
+            candidates.sort(key=lambda x: (x['priority'], -x['amount']))
+            best = candidates[0]
+            print(f"[PDF Parser] Found net amount: {best['amount']:.2f} using '{best['keyword']}'")
+            return best['amount']
+        
+        return None
+    
+    def _parse_amount(self, amount_str: str) -> float:
+        """Parse amount string to float, handling German and English formats.
+        
+        Args:
+            amount_str: Amount string like "1.234,56" or "1,234.56"
+            
+        Returns:
+            Float amount or None if parsing fails.
+        """
+        if not amount_str:
+            return None
+        
+        try:
+            # Determine format: German (1.234,56) or English (1,234.56)
+            # Count dots and commas
+            dots = amount_str.count('.')
+            commas = amount_str.count(',')
+            
+            if commas == 1 and dots >= 1:
+                # German format: 1.234,56 -> remove dots, replace comma with dot
+                amount_str = amount_str.replace('.', '').replace(',', '.')
+            elif dots == 1 and commas >= 1:
+                # English format: 1,234.56 -> remove commas
+                amount_str = amount_str.replace(',', '')
+            elif commas == 1 and dots == 0:
+                # German format without thousands: 234,56
+                amount_str = amount_str.replace(',', '.')
+            elif dots == 1 and commas == 0:
+                # English format without thousands: 234.56
+                pass  # Already correct
+            
+            return float(amount_str)
+        except ValueError:
+            return None
     
     def on_date_range_changed(self, start_date, end_date):
         """Handle date range filter changes."""
@@ -697,6 +948,10 @@ class ExpenseTrackerApp(QMainWindow):
     
     def show_monthly_view(self):
         """Show monthly totals."""
+        # Mark as aggregated view (no direct editing)
+        self._current_table_view = 'aggregated'
+        self._table_expense_ids = []
+        
         monthly = self.data_manager.get_monthly_totals(
             self.current_start_date, 
             self.current_end_date
@@ -719,6 +974,10 @@ class ExpenseTrackerApp(QMainWindow):
     
     def show_yearly_view(self):
         """Show yearly totals."""
+        # Mark as aggregated view (no direct editing)
+        self._current_table_view = 'aggregated'
+        self._table_expense_ids = []
+        
         yearly = self.data_manager.get_yearly_totals(
             self.current_start_date, 
             self.current_end_date
@@ -741,6 +1000,10 @@ class ExpenseTrackerApp(QMainWindow):
     
     def show_comparison_view(self):
         """Show month-over-month comparison."""
+        # Mark as aggregated view (no direct editing)
+        self._current_table_view = 'aggregated'
+        self._table_expense_ids = []
+        
         comparison = self.data_manager.get_monthly_comparison()
         
         # Get raw data for advanced charts
@@ -811,12 +1074,19 @@ class ExpenseTrackerApp(QMainWindow):
         # Store raw data for chart
         self.chart.raw_data = df
         
+        # Store current view type for double-click handling
+        self._current_table_view = 'all_data'
+        self._table_expense_ids = []
+        
         # Update table
         self.table.setRowCount(len(df))
         self.table.setColumnCount(5)
         self.table.setHorizontalHeaderLabels(['Datum', 'Betrag', 'Beschreibung', 'Quelle', 'Kategorie'])
         
         for i, (_, row) in enumerate(df.iterrows()):
+            # Store expense ID for this row
+            self._table_expense_ids.append(row.get('ID', ''))
+            
             self.table.setItem(i, 0, QTableWidgetItem(row['Date'].strftime('%d.%m.%Y')))
             
             amount_str = f"€{row['Amount']:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
@@ -899,6 +1169,10 @@ class ExpenseTrackerApp(QMainWindow):
     
     def show_month_detail(self, year_month: str):
         """Show individual invoices for a specific month."""
+        # Mark as editable view
+        self._current_table_view = 'all_data'
+        self._table_expense_ids = []
+        
         # Parse year-month
         try:
             period = pd.Period(year_month, freq='M')
@@ -921,6 +1195,9 @@ class ExpenseTrackerApp(QMainWindow):
         self.table.setHorizontalHeaderLabels(['Datum', 'Betrag', 'Beschreibung', 'Quelle', 'Kategorie'])
         
         for i, (_, row) in enumerate(df.iterrows()):
+            # Store expense ID for this row
+            self._table_expense_ids.append(row.get('ID', ''))
+            
             self.table.setItem(i, 0, QTableWidgetItem(row['Date'].strftime('%d.%m.%Y')))
             
             amount_str = f"€{row['Amount']:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
@@ -970,20 +1247,43 @@ class ExpenseTrackerApp(QMainWindow):
         header.setSectionResizeMode(len(headers) - 1, QHeaderView.ResizeMode.Stretch)
     
     def clear_data(self):
-        """Clear all data after confirmation."""
-        reply = QMessageBox.question(
-            self,
-            "Daten löschen",
-            "Möchten Sie wirklich alle Daten löschen?\nDiese Aktion kann nicht rückgängig gemacht werden.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-        
-        if reply == QMessageBox.StandardButton.Yes:
-            self.data_manager.clear_data()
-            self.refresh_all()
-            self.status_label.setText("Alle Daten wurden gelöscht")
-            self.status_label.setStyleSheet(f"color: {COLORS['text_muted']};")
+        """Clear all data for the current dashboard."""
+        if self.current_dashboard == "revenue":
+            reply = QMessageBox.question(
+                self,
+                "Einnahmen-Daten loeschen",
+                "Moechten Sie wirklich ALLE Einnahmen-Daten loeschen?\n\n"
+                "Diese Aktion kann nicht rueckgaengig gemacht werden.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            
+            if reply == QMessageBox.StandardButton.Yes:
+                self.data_manager.clear_data()
+                self.refresh_all()
+                self.status_label.setText("Alle Einnahmen-Daten wurden geloescht")
+                self.status_label.setStyleSheet(f"color: {COLORS['text_muted']};")
+                
+        elif self.current_dashboard == "expenses":
+            reply = QMessageBox.question(
+                self,
+                "Ausgaben-Daten loeschen",
+                "Moechten Sie wirklich ALLE Ausgaben-Daten loeschen?\n\n"
+                "Diese Aktion kann nicht rueckgaengig gemacht werden.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            
+            if reply == QMessageBox.StandardButton.Yes:
+                self.expenses_data_manager.clear_data()
+                self.refresh_expenses_dashboard()
+                self.status_label.setText("Alle Ausgaben-Daten wurden geloescht")
+                self.status_label.setStyleSheet(f"color: {COLORS['text_muted']};")
+        else:
+            QMessageBox.information(
+                self, "Information",
+                "Fuer dieses Dashboard ist die Loeschfunktion noch nicht verfuegbar."
+            )
     
     # =========================================================================
     # Search and Filter (Phase 3)
@@ -1013,6 +1313,10 @@ class ExpenseTrackerApp(QMainWindow):
     
     def show_filtered_data(self, df: pd.DataFrame):
         """Show filtered expense data with editable categories."""
+        # Mark as editable view
+        self._current_table_view = 'all_data'
+        self._table_expense_ids = []
+        
         if df.empty:
             self.table.setRowCount(1)
             self.table.setColumnCount(1)
@@ -1026,6 +1330,10 @@ class ExpenseTrackerApp(QMainWindow):
         self.table.setHorizontalHeaderLabels(['Datum', 'Betrag', 'Beschreibung', 'Kategorie', 'Lieferant', 'Quelle'])
         
         for i, (_, row) in enumerate(df.iterrows()):
+            # Store expense ID for this row
+            expense_id = row.get('ID', '')
+            self._table_expense_ids.append(expense_id)
+            
             # Date
             self.table.setItem(i, 0, QTableWidgetItem(row['Date'].strftime('%d.%m.%Y')))
             
@@ -1041,7 +1349,6 @@ class ExpenseTrackerApp(QMainWindow):
             # Category - with ComboBox for editing
             category_combo = CategoryEditorDialog.create_category_combo()
             category_combo.setCurrentText(row.get('Category', 'Uncategorized'))
-            expense_id = row.get('ID', '')
             category_combo.currentTextChanged.connect(
                 lambda cat, eid=expense_id: self.on_category_changed(eid, cat)
             )
@@ -1154,11 +1461,18 @@ class ExpenseTrackerApp(QMainWindow):
                 )
     
     # =========================================================================
-    # Analytics Engine Methods (Phase A)
+    # Analytics Engine Methods (Phase A: Extended Horizons)
     # =========================================================================
     
     def update_analytics(self, method: str = "combined"):
         """Update forecasts and recommendations using Analytics Engine.
+        
+        Calculates extended forecast horizons:
+        - Next month
+        - Next quarter (3 months)
+        - Next year (12 months)
+        - 2 years (24 months)
+        - 3 years (36 months)
         
         Args:
             method: Forecast method ('combined', 'linear', 'exponential', 
@@ -1181,28 +1495,19 @@ class ExpenseTrackerApp(QMainWindow):
         try:
             forecast_engine = ForecastEngine(data)
             
-            # Get forecast based on method
-            if method == "combined":
-                forecast = forecast_engine.combined_forecast(periods=6)
-            elif method == "linear":
-                forecast = forecast_engine.linear_regression_forecast(periods=6)
-            elif method == "exponential":
-                forecast = forecast_engine.exponential_smoothing_forecast(periods=6)
-            elif method == "moving_average":
-                forecast = forecast_engine.moving_average_forecast(periods=6)
-            elif method == "growth_rate":
-                forecast = forecast_engine.growth_rate_forecast(periods=6)
-            else:
-                forecast = forecast_engine.combined_forecast(periods=6)
+            # Get forecast with extended horizons
+            forecast = forecast_engine.forecast_with_horizons(method=method)
             
             # Store forecast for chart overlay
             self.current_forecast = forecast
             
-            # Update panel
+            # Update panel with extended horizons
             self.analytics_panel.update_forecast(forecast)
             
         except Exception as e:
             print(f"Forecast error: {e}")
+            import traceback
+            traceback.print_exc()
             self.current_forecast = None
             self.analytics_panel.update_forecast({
                 'method': 'Fehler',
@@ -1229,6 +1534,408 @@ class ExpenseTrackerApp(QMainWindow):
             method: Method identifier from AnalyticsPanel
         """
         self.update_analytics(method)
+    
+    # =========================================================================
+    # Dashboard Navigation
+    # =========================================================================
+    
+    def on_dashboard_changed(self, dashboard_name: str):
+        """Handle dashboard selection change.
+        
+        Args:
+            dashboard_name: Selected dashboard from dropdown
+        """
+        dashboard_map = {
+            "📊 Einnahmenanalyse": "revenue",
+            "💸 Ausgabenanalyse": "expenses",
+            "🔄 Cross-Dashboard": "cross"
+        }
+        
+        self.current_dashboard = dashboard_map.get(dashboard_name, "revenue")
+        
+        # Update action button based on dashboard
+        action_labels = {
+            "revenue": "📁 PDF Laden",
+            "expenses": "📁 PDF Laden",
+            "cross": "🔄 Analyse aktualisieren"
+        }
+        self.action_btn.setText(action_labels.get(self.current_dashboard, "📁 PDF Laden"))
+        
+        # Show appropriate content
+        if self.current_dashboard == "revenue":
+            self.show_revenue_dashboard()
+        elif self.current_dashboard == "expenses":
+            self.show_expenses_dashboard()
+        elif self.current_dashboard == "cross":
+            self.show_cross_dashboard()
+    
+    def on_action_button_clicked(self):
+        """Handle action button click based on current dashboard."""
+        if self.current_dashboard == "revenue":
+            self.load_pdfs()
+        elif self.current_dashboard == "expenses":
+            self.load_pdfs()  # Will be separate expense PDFs later
+        elif self.current_dashboard == "cross":
+            self.refresh_all()
+    
+    def open_manual_entry(self):
+        """Open dialog for manual data entry."""
+        dialog = ManualEntryDialog(self, dashboard_type=self.current_dashboard)
+        dialog.entry_saved.connect(self.on_manual_entry_saved)
+        dialog.exec()
+    
+    def on_manual_entry_saved(self, entry_data: dict):
+        """Handle saved manual entry (new or updated).
+        
+        Args:
+            entry_data: Dictionary with entry data from dialog
+        """
+        is_update = entry_data.pop('_is_update', False)
+        is_expenses = self.current_dashboard == "expenses"
+        
+        # Select appropriate data manager
+        dm = self.expenses_data_manager if is_expenses else self.data_manager
+        label = "Ausgabe" if is_expenses else "Einnahme"
+        
+        # Add DashboardType tag
+        entry_data['DashboardType'] = self.current_dashboard
+        
+        if is_update:
+            # Update existing entry
+            expense_id = entry_data.get('ID')
+            success = dm.update_expense(expense_id, entry_data)
+            
+            if success:
+                self.status_label.setText(
+                    f"✓ {label} aktualisiert: {entry_data['Description']}"
+                )
+                self.status_label.setStyleSheet(f"color: {COLORS['kpi_positive']};")
+                if is_expenses:
+                    self.refresh_expenses_dashboard()
+                else:
+                    self.refresh_all()
+            else:
+                self.status_label.setText("Fehler beim Aktualisieren")
+                self.status_label.setStyleSheet(f"color: {COLORS['kpi_negative']};")
+        else:
+            # Add new entry
+            count = dm.add_expenses([entry_data])
+            
+            if count > 0:
+                self.status_label.setText(
+                    f"✓ {label} gespeichert: {entry_data['Description']}"
+                )
+                self.status_label.setStyleSheet(f"color: {COLORS['kpi_positive']};")
+                if is_expenses:
+                    self.refresh_expenses_dashboard()
+                else:
+                    self.refresh_all()
+            else:
+                self.status_label.setText(f"Fehler beim Speichern der {label}")
+                self.status_label.setStyleSheet(f"color: {COLORS['kpi_negative']};")
+    
+    def on_entry_deleted(self, expense_id: str):
+        """Handle entry deletion.
+        
+        Args:
+            expense_id: ID of the expense to delete
+        """
+        is_expenses = self.current_dashboard == "expenses"
+        dm = self.expenses_data_manager if is_expenses else self.data_manager
+        
+        success = dm.delete_expense(expense_id)
+        
+        if success:
+            self.status_label.setText("✓ Eintrag gelöscht")
+            self.status_label.setStyleSheet(f"color: {COLORS['chart_orange']};")
+            if is_expenses:
+                self.refresh_expenses_dashboard()
+            else:
+                self.refresh_all()
+        else:
+            self.status_label.setText("Fehler beim Löschen")
+            self.status_label.setStyleSheet(f"color: {COLORS['kpi_negative']};")
+    
+    def on_table_double_click(self, index):
+        """Handle double-click on table row to edit entry.
+        
+        Args:
+            index: QModelIndex of clicked cell
+        """
+        # Only allow editing in 'all_data' view
+        current_view = getattr(self, '_current_table_view', 'aggregated')
+        if current_view != 'all_data':
+            # Show hint for aggregated views
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.information(
+                self,
+                "Hinweis",
+                "Zum Bearbeiten einzelner Einträge bitte zur Ansicht 'Alle Daten' wechseln."
+            )
+            return
+        
+        row = index.row()
+        expense_ids = getattr(self, '_table_expense_ids', [])
+        
+        if not expense_ids or row >= len(expense_ids):
+            return
+        
+        expense_id = expense_ids[row]
+        
+        if not expense_id:
+            return
+        
+        # Get full expense data from appropriate data manager
+        is_expenses = self.current_dashboard == "expenses"
+        dm = self.expenses_data_manager if is_expenses else self.data_manager
+        expense_data = dm.get_expense_by_id(expense_id)
+        
+        if expense_data:
+            # Open edit dialog
+            dialog = ManualEntryDialog(
+                self, 
+                dashboard_type=self.current_dashboard,
+                existing_data=expense_data
+            )
+            dialog.entry_saved.connect(self.on_manual_entry_saved)
+            dialog.entry_deleted.connect(self.on_entry_deleted)
+            dialog.exec()
+    
+    def show_revenue_dashboard(self):
+        """Show revenue analysis dashboard (current implementation)."""
+        # Reset KPI label to revenue
+        if hasattr(self, 'kpi_panel') and hasattr(self.kpi_panel, 'total_card'):
+            self.kpi_panel.total_card.title_label.setText("GESAMTEINNAHMEN")
+        
+        # Show analytics panel for revenue dashboard
+        if hasattr(self, 'analytics_panel'):
+            self.analytics_panel.setVisible(True)
+        
+        # This is already the default view
+        self.refresh_all()
+        self.status_label.setText("Einnahmenanalyse aktiv")
+    
+    def show_expenses_dashboard(self):
+        """Show expenses analysis dashboard (without analytics panel)."""
+        try:
+            self.status_label.setText("Ausgaben-Analyse aktiv")
+            self.status_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
+            self.refresh_expenses_dashboard()
+            
+        except Exception as e:
+            print(f"ERROR in show_expenses_dashboard: {e}")
+            import traceback
+            traceback.print_exc()
+            self.status_label.setText(f"Fehler: {str(e)}")
+    
+    def refresh_expenses_dashboard(self):
+        """Refresh the expenses dashboard with current data (no analytics)."""
+        try:
+            if not hasattr(self, 'expenses_data_manager'):
+                return
+            
+            # Calculate KPIs for expenses
+            kpis = self.expenses_data_manager.calculate_kpis(None, None)
+            
+            if hasattr(self, 'kpi_panel'):
+                # Update KPI labels for expenses
+                if hasattr(self.kpi_panel, 'total_card'):
+                    self.kpi_panel.total_card.title_label.setText("GESAMTAUSGABEN")
+                self.kpi_panel.update_kpis(kpis)
+            
+            # Update chart and table
+            self.update_expenses_display()
+            
+            # Hide analytics panel for expenses (only revenue has forecasting)
+            if hasattr(self, 'analytics_panel'):
+                self.analytics_panel.setVisible(False)
+            
+            # Update status
+            total_count = len(self.expenses_data_manager.expenses_df) if not self.expenses_data_manager.expenses_df.empty else 0
+            if total_count > 0:
+                date_range = self.expenses_data_manager.get_date_range()
+                if date_range and date_range[0] and date_range[1]:
+                    self.status_label.setText(
+                        f"{total_count} Ausgaben - {date_range[0].strftime('%d.%m.%Y')} bis {date_range[1].strftime('%d.%m.%Y')}"
+                    )
+            else:
+                self.status_label.setText("Keine Ausgaben vorhanden - PDF laden oder manuell eingeben")
+            
+        except Exception as e:
+            print(f"ERROR in refresh_expenses_dashboard: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def update_expenses_display(self):
+        """Update chart and table for expenses."""
+        try:
+            if not hasattr(self, 'expenses_data_manager'):
+                self.show_empty_expenses_state()
+                return
+            
+            if self.expenses_data_manager.expenses_df.empty:
+                self.show_empty_expenses_state()
+                return
+            
+            # Get all expenses data
+            data = self.expenses_data_manager.expenses_df.copy()
+            
+            if data is None or data.empty:
+                self.show_empty_expenses_state()
+                return
+            
+            # Aggregate monthly for chart
+            data['YearMonth'] = data['Date'].dt.strftime('%Y-%m')
+            monthly = data.groupby('YearMonth')['Amount'].sum().reset_index()
+            monthly = monthly.sort_values('YearMonth')
+            
+            # Update chart
+            if hasattr(self, 'chart'):
+                self.chart.set_data(monthly, 'monthly', data)
+            
+            # Update table
+            self.show_expenses_table(data)
+            
+        except Exception as e:
+            print(f"ERROR in update_expenses_display: {e}")
+            import traceback
+            traceback.print_exc()
+            self.show_empty_expenses_state()
+    
+    def show_empty_expenses_state(self):
+        """Show empty state for expenses dashboard."""
+        try:
+            if hasattr(self, 'chart') and hasattr(self.chart, 'canvas'):
+                self.chart.canvas.clear_chart()
+                self.chart.canvas.ax.text(
+                    0.5, 0.5, 
+                    'Keine Ausgaben vorhanden\n\nKlicken Sie auf "PDF Laden" oder "Manuell eingeben"\num Ausgaben hinzuzufugen.',
+                    ha='center', va='center',
+                    fontsize=12, color=COLORS['text_muted'],
+                    transform=self.chart.canvas.ax.transAxes
+                )
+                self.chart.canvas.draw()
+            
+            if hasattr(self, 'table'):
+                self.table.setRowCount(0)
+                self.table.setColumnCount(4)
+                self.table.setHorizontalHeaderLabels(['Datum', 'Betrag', 'Beschreibung', 'Quelle'])
+                
+        except Exception as e:
+            print(f"ERROR in show_empty_expenses_state: {e}")
+    
+    def show_expenses_table(self, data: pd.DataFrame):
+        """Show expenses data in table (double-click to edit)."""
+        try:
+            self._current_table_view = 'all_data'
+            self._table_expense_ids = []
+            
+            if data is None or data.empty:
+                if hasattr(self, 'table'):
+                    self.table.setRowCount(0)
+                return
+            
+            # Sort by date descending
+            data = data.sort_values('Date', ascending=False)
+            
+            if hasattr(self, 'table'):
+                self.table.setColumnCount(5)
+                self.table.setHorizontalHeaderLabels(['Datum', 'Betrag', 'Beschreibung', 'Kategorie', 'Quelle'])
+                self.table.setRowCount(len(data))
+                
+                for i, (_, row) in enumerate(data.iterrows()):
+                    self.table.setItem(i, 0, QTableWidgetItem(row['Date'].strftime('%d.%m.%Y')))
+                    self.table.setItem(i, 1, QTableWidgetItem(f"EUR {row['Amount']:,.2f}".replace(',', '.')))
+                    self.table.setItem(i, 2, QTableWidgetItem(str(row.get('Description', ''))))
+                    self.table.setItem(i, 3, QTableWidgetItem(str(row.get('Category', 'Manuell'))))
+                    self.table.setItem(i, 4, QTableWidgetItem(str(row.get('Source', ''))))
+                    self._table_expense_ids.append(row.get('ID'))
+                
+                self.table.resizeColumnsToContents()
+                
+        except Exception as e:
+            print(f"ERROR in show_expenses_table: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def update_expenses_analytics(self):
+        """Update analytics panel for expenses data."""
+        try:
+            # Check if analytics panel exists
+            if not hasattr(self, 'analytics_panel'):
+                print("WARNING: analytics_panel not found")
+                return
+            
+            # Check if data manager exists
+            if not hasattr(self, 'expenses_data_manager'):
+                self.analytics_panel.update_forecast({})
+                return
+            
+            # Get filtered data
+            if self.current_start_date and self.current_end_date:
+                data = self.expenses_data_manager.filter_by_date_range(
+                    self.current_start_date, self.current_end_date
+                )
+            else:
+                data = self.expenses_data_manager.expenses_df
+            
+            if data is None or data.empty:
+                self.analytics_panel.update_forecast({})
+                if hasattr(self.analytics_panel, 'update_recommendations'):
+                    self.analytics_panel.update_recommendations([])
+                return
+            
+            # Get current method from combo
+            if hasattr(self.analytics_panel, 'method_combo'):
+                method = self.analytics_panel.method_combo.currentText()
+            else:
+                method = "Jahrestrend"
+            
+            method_map = {
+                "Jahrestrend": "yearly_trend",
+                "Kombiniert": "combined",
+                "Monte Carlo": "monte_carlo",
+                "Ensemble": "ensemble",
+                "Linear": "linear",
+                "Exponentiell": "exponential",
+                "Gleitend": "moving_average",
+                "Wachstum": "growth_rate"
+            }
+            method = method_map.get(method, "yearly_trend")
+            
+            forecast_engine = ForecastEngine(data)
+            forecast = forecast_engine.forecast_with_horizons(method=method)
+            self.analytics_panel.update_forecast(forecast)
+            
+        except Exception as e:
+            print(f"Expenses forecast error: {e}")
+            import traceback
+            traceback.print_exc()
+            if hasattr(self, 'analytics_panel'):
+                self.analytics_panel.update_forecast({
+                    'method': 'Fehler',
+                    'interpretation': {'message': str(e)}
+                })
+    
+    def show_cross_dashboard(self):
+        """Show cross-dashboard analysis."""
+        # Placeholder - will be implemented
+        self.status_label.setText("🔄 Cross-Dashboard - Wird implementiert...")
+        self.status_label.setStyleSheet(f"color: {COLORS['chart_yellow']};")
+        
+        self.chart.canvas.clear_chart()
+        self.chart.canvas.ax.text(
+            0.5, 0.5, 
+            '🔄 Cross-Dashboard Analyse\n\nProfit = Einnahmen - Ausgaben\n\nKommt nach Marketing & Ausgaben...',
+            ha='center', va='center',
+            fontsize=14, color=COLORS['text_muted'],
+            transform=self.chart.canvas.ax.transAxes
+        )
+        self.chart.canvas.draw()
+        
+        self.table.setRowCount(0)
+        self.table.setColumnCount(1)
+        self.table.setHorizontalHeaderLabels(['Cross-Dashboard'])
 
 
 def main():

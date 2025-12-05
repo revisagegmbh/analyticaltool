@@ -19,14 +19,16 @@ class DataManager:
     DEFAULT_DATA_DIR = Path(__file__).parent / "data"
     DEFAULT_DATA_FILE = "expenses.json"
     
-    def __init__(self, data_dir: Optional[Path] = None):
+    def __init__(self, data_dir: Optional[Path] = None, data_file: Optional[str] = None):
         """Initialize the data manager.
         
         Args:
             data_dir: Custom data directory path. Uses default if None.
+            data_file: Custom data file name. Uses default if None.
         """
         self.data_dir = Path(data_dir) if data_dir else self.DEFAULT_DATA_DIR
-        self.data_file = self.data_dir / self.DEFAULT_DATA_FILE
+        file_name = data_file if data_file else self.DEFAULT_DATA_FILE
+        self.data_file = self.data_dir / file_name
         
         # Ensure data directory exists
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -495,6 +497,75 @@ class DataManager:
             self.save_data()
             return True
         return False
+    
+    def update_expense(self, expense_id: str, updated_data: Dict) -> bool:
+        """Update an expense with new data.
+        
+        Args:
+            expense_id: The ID of the expense to update.
+            updated_data: Dictionary with updated fields (Date, Amount, Description, etc.)
+            
+        Returns:
+            True if successful, False otherwise.
+        """
+        if self.expenses_df.empty:
+            return False
+        
+        mask = self.expenses_df['ID'] == expense_id
+        if not mask.any():
+            return False
+        
+        # Update each field if provided
+        for field in ['Date', 'Amount', 'Description', 'Category', 'Vendor', 'Source', 'PeriodType']:
+            if field in updated_data:
+                value = updated_data[field]
+                if field == 'Date':
+                    value = pd.to_datetime(value)
+                self.expenses_df.loc[mask, field] = value
+        
+        # Re-sort by date
+        self.expenses_df = self.expenses_df.sort_values('Date')
+        self.save_data()
+        return True
+    
+    def delete_expense(self, expense_id: str) -> bool:
+        """Delete an expense by ID.
+        
+        Args:
+            expense_id: The ID of the expense to delete.
+            
+        Returns:
+            True if successful, False otherwise.
+        """
+        if self.expenses_df.empty:
+            return False
+        
+        mask = self.expenses_df['ID'] == expense_id
+        if not mask.any():
+            return False
+        
+        self.expenses_df = self.expenses_df[~mask].reset_index(drop=True)
+        self.save_data()
+        return True
+    
+    def get_expense_by_id(self, expense_id: str) -> Optional[Dict]:
+        """Get a single expense by ID.
+        
+        Args:
+            expense_id: The ID of the expense.
+            
+        Returns:
+            Dictionary with expense data or None if not found.
+        """
+        if self.expenses_df.empty:
+            return None
+        
+        mask = self.expenses_df['ID'] == expense_id
+        if not mask.any():
+            return None
+        
+        row = self.expenses_df[mask].iloc[0]
+        return row.to_dict()
     
     def get_categories_summary(self) -> pd.DataFrame:
         """Get summary of expenses by category.
